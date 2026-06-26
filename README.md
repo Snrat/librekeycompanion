@@ -83,10 +83,29 @@ credential-provider app such as [Authnkey](https://github.com/mimi89999/Authnkey
 - **Info** — an overview card for a tapped/plugged key: which applets are present,
   the FIDO2 device (name + certification + icon from MDS), and tappable rows that
   open full detail dialogs for PIV and OpenPGP.
+
+ <img width="416" height="853" alt="image" src="https://github.com/user-attachments/assets/25c2288b-ad35-4996-8bc0-efbc31dbf094" />
+
 - **OTP** — TOTP/HOTP credentials with live codes and a countdown; add (QR or paste)
-  and delete. Serves both OATH and Token2 keys.
+  and delete. Serves both OATH (Yubikey-like) and On-Device (Token2 keys).
+
+<img width="423" height="284" alt="image" src="https://github.com/user-attachments/assets/a07d5607-ffe2-4bd7-b4c2-cb4300f6ded3" />
+
+  
 - **FIDO2** — authenticator info, PIN management, `alwaysUV`, passkey list/details/
   delete, and fingerprint enrollment for bio keys.
+
+<img width="411" height="404" alt="image" src="https://github.com/user-attachments/assets/6ee61c04-5bb9-4e90-92e2-445a38b2a8ef" />
+<img width="421" height="481" alt="image" src="https://github.com/user-attachments/assets/89d05ac4-7003-4e9e-ba8a-f1b77cb5add3" />
+<img width="415" height="436" alt="image" src="https://github.com/user-attachments/assets/4c2d9a73-26eb-4dcf-9d2c-92b1c73a8c63" />
+
+<img width="423" height="616" alt="image" src="https://github.com/user-attachments/assets/2772b7b4-4c16-44d4-9e8c-15ac8b52f180" />
+<img width="425" height="460" alt="image" src="https://github.com/user-attachments/assets/1d850030-c44c-4b14-b3a8-529a868c5d24" />
+<img width="414" height="550" alt="image" src="https://github.com/user-attachments/assets/f962e66e-96a1-4473-8c93-10099074ccfc" />
+<img width="425" height="539" alt="image" src="https://github.com/user-attachments/assets/8eb7cc5f-b6ff-44ac-af51-8a1d9ef2655a" />
+
+
+
 
 ---
 
