@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 48 48">
+  <!-- pink rounded square ground -->
+  <path fill="#F80041"
+        d="M8,2 L40,2 A6,6 0 0 1 46,8 L46,40 A6,6 0 0 1 40,46 L8,46 A6,6 0 0 1 2,40 L2,8 A6,6 0 0 1 8,2 Z"/>
+  <g transform="translate(24,25)" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
+    <!-- contactless arcs -->
+    <path stroke-width="1.7" d="M -9,-12 A 13,13 0 0 1 9,-12"/>
+    <path stroke-width="1.7" d="M -5.5,-8.5 A 8,8 0 0 1 5.5,-8.5"/>
+    <!-- key bow -->
+    <path stroke-width="2.1" d="M 0,-1 m -5,0 a 5,5 0 1 1 10,0 a 5,5 0 1 1 -10,0"/>
+    <!-- key shaft + teeth -->
+    <path stroke-width="2.1" d="M 0,4 L 0,14 M 0,9 L 4,9 M 0,12.5 L 3.3,12.5"/>
+  </g>
+</svg>
