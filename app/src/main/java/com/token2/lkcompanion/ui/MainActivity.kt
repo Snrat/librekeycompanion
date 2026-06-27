@@ -308,7 +308,6 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             RECEIVER_NOT_EXPORTED)
         registerReceiver(usbDetachReceiver,
             IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED), RECEIVER_NOT_EXPORTED)
-        if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) handleUsbIntent(intent)
     }
 
     /** 1s ticker drives the TOTP countdown on already-fetched codes. */
@@ -349,10 +348,14 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         if (devices.isEmpty()) return
         for (device in devices) {
             if (looksLikeKey(device)) {
-                // Only auto-open if we ALREADY have permission. Don't pop the consent
-                // dialog from a background resume-scan — that should happen on an
-                // explicit attach, not spontaneously.
+                // This only runs from onResume(), i.e. while the app is in the
+                // foreground, so it's fine to request the one-time USB consent here.
+                // (We no longer register a USB_DEVICE_ATTACHED intent-filter, which
+                // used to make Android offer to launch the app on every device plug
+                // even while closed — issue #1. Consent now only happens with the
+                // app open and foregrounded.)
                 if (usbManager.hasPermission(device)) openUsb(device)
+                else requestUsbPermission(device)
                 return
             }
         }
@@ -383,18 +386,6 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     }
 
     // --- USB ---
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        // A USB attach delivered while we're running (singleTop) arrives here.
-        if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) handleUsbIntent(intent)
-    }
-
-    private fun handleUsbIntent(intent: Intent?) {
-        val device = intent?.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE) ?: return
-        requestUsbPermission(device)
-    }
-
     private fun requestUsbPermission(device: UsbDevice) {
         if (usbManager.hasPermission(device)) { openUsb(device); return }
         val pi = PendingIntent.getBroadcast(
