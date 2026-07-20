@@ -1,6 +1,9 @@
 package com.token2.lkcompanion.token2ui
 
 import android.content.Context
+import android.content.DialogInterface
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.ArrayAdapter
@@ -43,19 +46,23 @@ object AddEntryDialog {
         /** Parse a scanned/pasted otpauth payload and fill every field. */
         fun applyScannedUri(raw: String) {
             uriField.setText(raw)
-            val p = parseOtpauth(raw) ?: return
-            if (p.issuer != null) appField.setText(p.issuer)
-            acctField.setText(p.account)
-            secretField.setText(p.secretBase32)
-            algoSpinner.setSelection(if (p.sha256) 1 else 0)
-            periodSpinner.setSelection(if (p.period == 60) 1 else 0)
+        }
+
+        internal fun applyParsed(p: Parsed) {
+            val values = formValues(p)
+            appField.setText(values.issuer)
+            acctField.setText(values.account)
+            secretField.setText(values.secretBase32)
+            algoSpinner.setSelection(values.algorithmIndex)
+            periodSpinner.setSelection(values.periodIndex)
         }
     }
 
     fun show(
         context: Context,
         onScanRequested: ((Handle) -> Unit)? = null,
-        onReady: (Token2Codec.Entry) -> Unit,
+        allowedDigits: Set<Int>? = null,
+        onReady: (Token2Codec.Entry) -> Boolean,
     ) {
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_add_entry, null)
         val uriField = view.findViewById<EditText>(R.id.fieldUri)
@@ -73,34 +80,73 @@ object AddEntryDialog {
 
         val handle = Handle(uriField, appField, acctField, secretField,
             algoSpinner, periodSpinner)
+        uriField.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                parseOtpauth(s?.toString().orEmpty())?.let(handle::applyParsed)
+            }
+        })
         if (onScanRequested != null) {
             scanButton.setOnClickListener { onScanRequested(handle) }
         } else {
             scanButton.visibility = View.GONE
         }
 
-        MaterialAlertDialogBuilder(context)
+        val dialog = MaterialAlertDialogBuilder(context)
             .setTitle("Add OTP entry")
             .setView(view)
-            .setPositiveButton("Add") { _, _ ->
+            .setPositiveButton("Add", null)
+            .setNegativeButton("Cancel", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+                val rawUri = uriField.text.toString().trim()
+                val parsedUri = rawUri.takeIf { it.isNotEmpty() }?.let(::parseOtpauth)
+                if (rawUri.isNotEmpty() && parsedUri == null) {
+                    Toast.makeText(context, "Enter a valid OTP Auth URI.", Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
                 val algo = if (algoSpinner.selectedItemPosition == 1)
                     HashAlgo.SHA256 else HashAlgo.SHA1
                 val period = if (periodSpinner.selectedItemPosition == 1) 60 else 30
+                if (parsedUri?.isHotp == true && parsedUri.counter != 0L) {
+                    Toast.makeText(
+                        context,
+                        "HOTP import currently supports only an initial counter of 0.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    return@setOnClickListener
+                }
+                val digits = parsedUri?.digits ?: 6
+                if (allowedDigits != null && digits !in allowedDigits) {
+                    Toast.makeText(
+                        context,
+                        "This OTP key supports only ${allowedDigits.sorted().joinToString(" or ")} digits.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    return@setOnClickListener
+                }
                 val entry = buildManual(
                     appField.text.toString(),
                     acctField.text.toString(),
                     secretField.text.toString(),
-                    algo, period)
+                    algo,
+                    period,
+                    isHotp = parsedUri?.isHotp == true,
+                    digits = digits,
+                    counter = parsedUri?.counter ?: 0L,
+                )
                 if (entry == null) {
                     Toast.makeText(context,
                         "Need an account and a valid base32 secret.",
                         Toast.LENGTH_LONG).show()
-                } else {
-                    onReady(entry)
+                } else if (onReady(entry)) {
+                    dialog.dismiss()
                 }
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+        }
+        dialog.show()
     }
 
     // --- parsing & building ---
@@ -114,6 +160,23 @@ object AddEntryDialog {
         val period: Int,
         val digits: Int,
         val isHotp: Boolean,
+        val counter: Long,
+    )
+
+    internal data class FormValues(
+        val issuer: String,
+        val account: String,
+        val secretBase32: String,
+        val algorithmIndex: Int,
+        val periodIndex: Int,
+    )
+
+    internal fun formValues(parsed: Parsed): FormValues = FormValues(
+        issuer = parsed.issuer.orEmpty(),
+        account = parsed.account,
+        secretBase32 = parsed.secretBase32,
+        algorithmIndex = if (parsed.sha256) 1 else 0,
+        periodIndex = if (parsed.period == 60) 1 else 0,
     )
 
     /**
@@ -124,9 +187,11 @@ object AddEntryDialog {
         val s = raw.trim()
         if (!s.startsWith("otpauth://", ignoreCase = true)) return null
         val afterScheme = s.substring("otpauth://".length)
-        val isHotp = afterScheme.startsWith("hotp", ignoreCase = true)
         val slash = afterScheme.indexOf('/')
         if (slash < 0) return null
+        val type = afterScheme.substring(0, slash).lowercase()
+        if (type != "totp" && type != "hotp") return null
+        val isHotp = type == "hotp"
         val rest = afterScheme.substring(slash + 1)
         val qIdx = rest.indexOf('?')
         val label = if (qIdx >= 0) rest.substring(0, qIdx) else rest
@@ -153,23 +218,30 @@ object AddEntryDialog {
         else
             s.lowercase().contains("sha256")
 
-        val period = params["period"]?.toIntOrNull() ?: 30
-        val digits = params["digits"]?.toIntOrNull() ?: 6
+        val period = params["period"]?.let { it.toIntOrNull() ?: return null } ?: 30
+        val digits = params["digits"]?.let { it.toIntOrNull() ?: return null } ?: 6
+        val counter = if (isHotp) {
+            params["counter"]?.toLongOrNull()?.takeIf { it >= 0 } ?: return null
+        } else {
+            0L
+        }
 
-        return Parsed(issuer, account, secret, sha256, period, digits, isHotp)
+        return Parsed(issuer, account, secret, sha256, period, digits, isHotp, counter)
     }
 
     /** Build an entry from the (possibly user-edited) manual fields + selectors. */
     fun buildManual(app: String, account: String, secret: String,
-                    algo: HashAlgo, period: Int): Token2Codec.Entry? {
+                    algo: HashAlgo, period: Int, isHotp: Boolean = false,
+                    digits: Int = 6, counter: Long = 0L): Token2Codec.Entry? {
         if (account.isBlank() || secret.isBlank()) return null
+        if (isHotp && counter != 0L) return null
         val decoded = runCatching { Base32.decode(secret) }.getOrNull() ?: return null
         val entry = Token2Codec.Entry(
-            type = Token2Codec.TYPE_TOTP,
+            type = if (isHotp) Token2Codec.TYPE_HOTP else Token2Codec.TYPE_TOTP,
             algorithm = if (algo == HashAlgo.SHA256)
                 Token2Codec.ALG_SHA256 else Token2Codec.ALG_SHA1,
             timestep = period,
-            codeLength = 6,
+            codeLength = digits,
             buttonRequired = false,
             appName = app.trim(),
             accountName = account.trim(),

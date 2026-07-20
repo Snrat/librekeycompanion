@@ -26,6 +26,7 @@ import com.token2.lkcompanion.R
 import com.token2.lkcompanion.fidoui.AuthnkeyIntegration
 import com.token2.lkcompanion.fidoui.FidoRepository
 import com.token2.lkcompanion.fidoui.PasskeyAdapter
+import com.token2.lkcompanion.oath.FeitianOtpApplet
 import com.token2.lkcompanion.oath.OathApplet
 import com.token2.lkcompanion.openpgp.OpenPgpApplet
 import com.token2.lkcompanion.piv.PivApplet
@@ -35,6 +36,7 @@ import com.token2.lkcompanion.token2ui.Token2EntryAdapter
 import com.token2.lkcompanion.oathui.OathEntryAdapter
 import com.token2.lkcompanion.token2ui.Token2Repository
 import com.token2.lkcompanion.transport.NfcTransport
+import com.token2.lkcompanion.transport.AppletUnavailableException
 import com.token2.lkcompanion.transport.SmartCardTransport
 import com.token2.lkcompanion.transport.TransportException
 import com.token2.lkcompanion.transport.UsbCcidTransport
@@ -65,7 +67,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     // tap regardless of tab; `managementPending` gates that one-shot dispatch.
     private val managementRepo = com.token2.lkcompanion.management.ManagementRepository()
     @Volatile private var managementPending = false
-    /** Which OTP applet the current key uses, decided at read time. */
+    /** Whether the current OTP backend uses the shared smart-card OTP UI. */
     private var otpIsOath = false
 
     // FIDO2 tab
@@ -103,6 +105,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     private val usbExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     /** Guard so a replug (attach intent + resume) doesn't open the same device twice. */
     @Volatile private var usbBusy = false
+    private var feitianTouchDialog: androidx.appcompat.app.AlertDialog? = null
 
     // NFC tap overlay
     private lateinit var nfcOverlay: View
@@ -152,7 +155,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         nfcOverlaySubtitle = findViewById(R.id.nfcOverlaySubtitle)
         nfcPulseCircle = findViewById(R.id.nfcPulseCircle)
         findViewById<android.widget.Button>(R.id.nfcOverlayCancel).setOnClickListener {
-            repo.arm(Token2Repository.PendingOp.Refresh)
+            cancelPendingOtpOperation()
             hideNfcOverlay()
         }
 
@@ -187,12 +190,20 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                         this, "Code copied", android.widget.Toast.LENGTH_SHORT).show()
                 }
             },
+            onCalculate = { d -> calculateOath(d) },
         )
         findViewById<android.widget.ImageButton>(R.id.btnRefresh).setOnClickListener {
-            repo.arm(Token2Repository.PendingOp.Refresh)
+            if (!armOtpRefresh()) {
+                toast("Finish or cancel the current OTP operation before refreshing.")
+                return@setOnClickListener
+            }
             showNfcOverlay("Hold your key to the phone", "Reading OTP entries…")
         }
         findViewById<android.widget.ImageButton>(R.id.btnAdd).setOnClickListener {
+            // Freeze the destination while the dialog is open. A QR scan may leave
+            // the activity briefly, during which a different key can be connected.
+            val oathTarget = oathRepo.activeBackend.takeIf { otpIsOath }
+            val targetsOath = otpIsOath
             AddEntryDialog.show(
                 context = this,
                 onScanRequested = { handle ->
@@ -200,19 +211,29 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                     val opts = com.journeyapps.barcodescanner.ScanOptions().apply {
                         setDesiredBarcodeFormats(
                             com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
-                        setPrompt("Scan a TOTP QR code")
+                        setPrompt("Scan an OTP QR code")
                         setBeepEnabled(false)
                         setOrientationLocked(true)   // follow the app's portrait UI
                     }
                     qrLauncher.launch(opts)
                 },
-                onReady = { entry ->
-                    if (otpIsOath) {
+                onReady = onReady@{ entry ->
+                    if (targetsOath) {
+                        val backend = oathTarget ?: run {
+                            toast("Read the OTP key again before adding a credential.")
+                            return@onReady false
+                        }
                         // Convert the parsed entry to an OATH credential and arm OATH add.
-                        val cred = entryToOathCredential(entry)
-                        oathRepo.arm(com.token2.lkcompanion.oathui.OathRepository.PendingOp.Add(cred))
-                        showNfcOverlay("Hold your key to the phone", "Writing ${entry.accountName}…")
-                        return@show
+                        val cred = entryToOathCredential(entry, backend)
+                        return@onReady startOathOperation(
+                            com.token2.lkcompanion.oathui.OathRepository.PendingOp.Add(
+                                cred,
+                                expectedBackend = backend,
+                            ),
+                            "add ${entry.accountName}",
+                        ) {
+                            showNfcOverlay("Hold your key to the phone", "Writing ${entry.accountName}…")
+                        }
                     }
                     val cachedDup = repo.cachedDuplicateOf(entry)
                     if (cachedDup != null) {
@@ -228,12 +249,15 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                             }
                             .setNegativeButton("Cancel", null)
                             .show()
+                        true
                     } else {
                         repo.arm(Token2Repository.PendingOp.Add(entry))
                         showNfcOverlay("Hold your key to the phone",
                             "Writing ${entry.accountName}…")
+                        true
                     }
                 },
+                allowedDigits = oathTarget?.allowedImportDigits,
             )
         }
 
@@ -292,9 +316,12 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             showPane(newMode)
             // Over USB the key stays plugged in, so there's no re-tap to trigger a
             // read. Re-read the live device for the newly-selected tab.
-            if (mode == Mode.TOTP) repo.arm(Token2Repository.PendingOp.Refresh)
-            if (mode == Mode.FIDO) fidoRepo.arm(FidoRepository.PendingOp.ReadInfo)
-            rereadUsbForCurrentTab()
+            if (mode == Mode.TOTP) {
+                if (armOtpRefresh()) rereadUsbForCurrentTab()
+            } else {
+                if (mode == Mode.FIDO) fidoRepo.arm(FidoRepository.PendingOp.ReadInfo)
+                rereadUsbForCurrentTab()
+            }
             true
         }
         showPane(Mode.INFO)   // start on Info
@@ -377,14 +404,26 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
 
+    /** Request a refresh without overwriting a pending/retryable OATH operation. */
+    private fun armOtpRefresh(): Boolean {
+        if (!oathRepo.requestRefresh()) return false
+        repo.arm(Token2Repository.PendingOp.Refresh)
+        return true
+    }
+
+    /** Explicit cancellation is separate from refresh so an in-flight APDU stays intact. */
+    private fun cancelPendingOtpOperation() {
+        repo.arm(Token2Repository.PendingOp.Refresh)
+        oathRepo.cancelPending()
+    }
+
     /** 1s ticker drives the TOTP countdown on already-fetched codes. */
     private fun startTotpTicker() {
         val handler = android.os.Handler(mainLooper)
         val r = object : Runnable {
             override fun run() {
-                val secs = com.token2.lkcompanion.oath.OathCore
-                    .secondsRemaining(System.currentTimeMillis() / 1000, 30)
-                if (otpIsOath) oathAdapter.tick(secs) else adapter.tick(secs)
+                val now = System.currentTimeMillis() / 1000
+                if (otpIsOath) oathAdapter.tick(now) else adapter.tick(now)
                 handler.postDelayed(this, 1000)
             }
         }
@@ -510,10 +549,16 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     private fun clearKeyData(reason: String) {
         // Clear cached state in the repositories too, so a later read starts fresh.
         repo.arm(Token2Repository.PendingOp.Refresh)
+        oathRepo.onTransportDisconnected()
         fidoRepo.arm(FidoRepository.PendingOp.ReadInfo)
         fidoRepo.forgetPin()
         runOnUiThread {
+            feitianTouchDialog?.dismiss()
+            feitianTouchDialog = null
+            otpIsOath = false
+            if (otpList.adapter !== adapter) otpList.adapter = adapter
             adapter.submit(emptyList())
+            oathAdapter.submit(emptyList())
             passkeyAdapter.submit(emptyList())
             infoStatusCard.renderHint("Tap your key to the phone to see what it supports.")
             fidoStatusCard.renderHint("Tap your key to read FIDO2 status.")
@@ -631,13 +676,16 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                 ?: throw TransportException("openDevice returned null")
             val hid = Token2HidTransport(conn, hidIface)
             val client = com.token2.lkcompanion.token2.Token2Client.overHid(hid)
+            val challengeUnixSeconds = System.currentTimeMillis() / 1000
             val entries = try {
-                client.enumerate(System.currentTimeMillis() / 1000)
+                client.enumerate(challengeUnixSeconds)
             } catch (e: com.token2.lkcompanion.token2.Token2Exception.EntryNotFound) {
                 emptyList()
             }
             runOnUiThread {
-                adapter.submit(entries)
+                otpIsOath = false
+                if (otpList.adapter !== adapter) otpList.adapter = adapter
+                adapter.submit(entries, challengeUnixSeconds)
                 armedHint.text = "Token2 OTP over USB-HID: ${entries.size} entr" +
                     (if (entries.size == 1) "y" else "ies")
             }
@@ -670,6 +718,9 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         if (result is Token2Repository.OpResult.NotAToken2Key) {
             readOath(transport); return
         }
+        // The current key is Token2; discard capabilities cached from an older
+        // OATH/Feitian key before another Add dialog is opened.
+        oathRepo.clearCache()
         otpIsOath = false
         runOnUiThread {
             if (otpList.adapter !== adapter) otpList.adapter = adapter
@@ -1038,8 +1089,9 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             when (result) {
                 is com.token2.lkcompanion.oathui.OathRepository.OpResult.Success -> {
                     oathAdapter.submit(result.entries)
-                    armedHint.text = "${result.message}. ${result.entries.size} entr" +
+                    val countText = "${result.entries.size} entr" +
                         if (result.entries.size == 1) "y." else "ies."
+                    armedHint.text = "${result.message}. $countText"
                 }
                 is com.token2.lkcompanion.oathui.OathRepository.OpResult.DuplicateExists -> {
                     oathAdapter.submit(result.entries)
@@ -1047,26 +1099,69 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                         .setTitle("Entry already exists")
                         .setMessage("\"${result.existingLabel}\" is already on the key. Overwrite it?")
                         .setPositiveButton("Overwrite") { _, _ ->
-                            oathRepo.arm(com.token2.lkcompanion.oathui.OathRepository.PendingOp.Add(
-                                result.cred, allowOverwrite = true))
-                            showNfcOverlay("Hold your key to the phone", "Replacing ${result.cred.account}…")
+                            startOathOperation(
+                                com.token2.lkcompanion.oathui.OathRepository.PendingOp.Add(
+                                    result.cred,
+                                    allowOverwrite = true,
+                                    expectedBackend = oathRepo.activeBackend,
+                                ),
+                                "replace ${result.cred.account}",
+                            ) {
+                                showNfcOverlay(
+                                    "Hold your key to the phone",
+                                    "Replacing ${result.cred.account}…",
+                                )
+                            }
                         }
                         .setNegativeButton("Cancel") { _, _ ->
-                            oathRepo.arm(com.token2.lkcompanion.oathui.OathRepository.PendingOp.Refresh)
+                            oathRepo.cancelPending()
                             armedHint.text = "Add cancelled — entry already exists."
                         }
                         .show()
                 }
                 is com.token2.lkcompanion.oathui.OathRepository.OpResult.Failure ->
                     armedHint.text = "Failed: ${result.message}"
+                is com.token2.lkcompanion.oathui.OathRepository.OpResult.TouchTimeout -> {
+                    armedHint.text =
+                        "The key did not confirm the OTP operation. Retry to continue safely."
+                    showFeitianTouchRetry(result.message)
+                }
                 com.token2.lkcompanion.oathui.OathRepository.OpResult.NotAnOathKey ->
-                    armedHint.text = "No OTP applet (Token2 or OATH) on this key."
+                    armedHint.text = "No OTP applet (Token2, OATH, or Feitian) on this key."
             }
         }
     }
 
-    /** Convert a parsed Token2 entry to an OATH credential (TOTP). */
-    private fun entryToOathCredential(e: com.token2.lkcompanion.token2.Token2Codec.Entry):
+    /** Retry a timed-out Feitian operation while the repository still holds it. */
+    private fun showFeitianTouchRetry(message: String) {
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Touch not detected")
+            .setMessage(
+                "$message\n\nTap Retry, then touch and hold the key when its LED blinks."
+            )
+            .setPositiveButton("Retry") { _, _ ->
+                showNfcOverlay("Hold your key to the phone", "Retrying OTP operation…")
+            }
+            .setNegativeButton("Cancel") { _, _ ->
+                oathRepo.cancelPending()
+            }
+            .create()
+        dialog.setOnCancelListener {
+            oathRepo.cancelPending()
+        }
+        dialog.setOnDismissListener {
+            if (feitianTouchDialog === dialog) feitianTouchDialog = null
+        }
+        feitianTouchDialog?.dismiss()
+        feitianTouchDialog = dialog
+        dialog.show()
+    }
+
+    /** Convert an import according to the backend selected when Add was opened. */
+    private fun entryToOathCredential(
+        e: com.token2.lkcompanion.token2.Token2Codec.Entry,
+        backend: com.token2.lkcompanion.oathui.OathRepository.BackendKind,
+    ):
             com.token2.lkcompanion.oath.OathCredential {
         val algo = when (e.algorithm) {
             com.token2.lkcompanion.token2.Token2Codec.ALG_SHA256 -> com.token2.lkcompanion.oath.OathCore.HashAlgo.SHA256
@@ -1076,9 +1171,13 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             issuer = e.appName.ifBlank { null },
             account = e.accountName,
             secret = e.seed ?: ByteArray(0),
-            type = com.token2.lkcompanion.oath.OathCredential.Type.TOTP,
+            type = if (e.isTotp) {
+                com.token2.lkcompanion.oath.OathCredential.Type.TOTP
+            } else {
+                com.token2.lkcompanion.oath.OathCredential.Type.HOTP
+            },
             algo = algo,
-            digits = e.codeLength,
+            digits = backend.normalizeImportedDigits(e.codeLength),
             period = if (e.timestep > 0) e.timestep else 30,
         )
     }
@@ -1089,11 +1188,27 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             .setMessage("Remove \"${if (d.issuer.isBlank()) d.account else d.issuer + " / " + d.account}\" " +
                 "from the key permanently?")
             .setPositiveButton("Delete") { _, _ ->
-                oathRepo.arm(com.token2.lkcompanion.oathui.OathRepository.PendingOp.Delete(d.name))
-                showNfcOverlay("Hold your key to the phone", "Deleting ${d.account}…")
+                startOathOperation(
+                    com.token2.lkcompanion.oathui.OathRepository.PendingOp.Delete(d),
+                    "delete ${d.account}",
+                ) {
+                    showNfcOverlay("Hold your key to the phone", "Deleting ${d.account}…")
+                }
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun calculateOath(d: com.token2.lkcompanion.oathui.OathRepository.Display) {
+        if (d.backend != com.token2.lkcompanion.oathui.OathRepository.BackendKind.FEITIAN) {
+            return
+        }
+        startOathOperation(
+            com.token2.lkcompanion.oathui.OathRepository.PendingOp.Calculate(d),
+            "calculate ${d.account}",
+        ) {
+            showNfcOverlay("Hold your key to the phone", "Calculating ${d.account}…")
+        }
     }
 
     /** Info tab tap: identify every applet and render the overview, with tap-to-manage. */
@@ -1111,44 +1226,81 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             secondary = transport.displayName,
             chipText = "OK", chipState = StatusCard.State.SUCCESS,
         ))
-        rows.add(oathInfoRow(transport))
-        rows.add(token2InfoRow(transport))
+        rows.add(otpInfoRow(transport))
         rows.add(fido2InfoRow(transport, usbDevice))
         rows.add(openPgpInfoRow(transport))
         rows.add(pivInfoRow(transport))
         runOnUiThread { hideNfcOverlay(); infoStatusCard.render(rows) }
     }
 
-    /** OATH applet row for the Info overview — taps through to the OTP tab. */
-    private fun oathInfoRow(transport: SmartCardTransport): StatusCard.Row = try {
-        val a = OathApplet(transport); val info = a.select()
-        val n = a.list().size
-        StatusCard.Row(R.drawable.ic_timer, "OATH OTP", "$n credential(s) · tap to manage",
-            chipText = "Present", chipState = StatusCard.State.SUCCESS,
-            onClick = { goToTab(Mode.TOTP, R.id.nav_totp) })
-    } catch (e: Exception) {
-        StatusCard.Row(R.drawable.ic_timer, "OATH OTP", "not on this key",
-            chipText = "—", chipState = StatusCard.State.NEUTRAL, dimmed = true)
+    /** Probe OTP protocols in dispatch order and stop at the first supported applet. */
+    private fun otpInfoRow(transport: SmartCardTransport): StatusCard.Row {
+        try {
+            val client = com.token2.lkcompanion.token2.Token2Client.overNfc(transport)
+            val count = try {
+                client.enumerate(System.currentTimeMillis() / 1000).size
+            } catch (_: com.token2.lkcompanion.token2.Token2Exception.EntryNotFound) {
+                0
+            }
+            return otpPresentRow("Token2 OTP", count)
+        } catch (_: AppletUnavailableException) {
+            // Probe the next protocol.
+        } catch (e: Exception) {
+            return otpProbeErrorRow("Token2 OTP", e)
+        }
+
+        try {
+            val applet = OathApplet(transport)
+            applet.select()
+            val entries = applet.list()
+            oathRepo.noteDetectedBackend(
+                com.token2.lkcompanion.oathui.OathRepository.BackendKind.YKOATH
+            )
+            return otpPresentRow("OATH OTP", entries.size)
+        } catch (_: AppletUnavailableException) {
+            // Probe the next protocol.
+        } catch (e: Exception) {
+            return otpProbeErrorRow("OATH OTP", e)
+        }
+
+        try {
+            val applet = FeitianOtpApplet(transport)
+            applet.select()
+            val entries = applet.list()
+            oathRepo.noteDetectedBackend(
+                com.token2.lkcompanion.oathui.OathRepository.BackendKind.FEITIAN,
+            )
+            return otpPresentRow("Feitian OTP", entries.size)
+        } catch (_: AppletUnavailableException) {
+            return StatusCard.Row(
+                R.drawable.ic_timer,
+                "On-device OTP",
+                "not on this key",
+                chipText = "—",
+                chipState = StatusCard.State.NEUTRAL,
+                dimmed = true,
+            )
+        } catch (e: Exception) {
+            return otpProbeErrorRow("Feitian OTP", e)
+        }
     }
 
-    /** Token2 OTP row for the Info overview — taps through to the OTP tab. */
-    private fun token2InfoRow(transport: SmartCardTransport): StatusCard.Row = try {
-        val c = com.token2.lkcompanion.token2.Token2Client.overNfc(transport)
-        val n = try {
-            c.enumerate(System.currentTimeMillis() / 1000).size
-        } catch (e: com.token2.lkcompanion.token2.Token2Exception.EntryNotFound) { 0 }
-        StatusCard.Row(R.drawable.ic_timer, "On-device OTP", "$n entry(s) · tap to manage",
-            chipText = "Present", chipState = StatusCard.State.SUCCESS,
-            onClick = { goToTab(Mode.TOTP, R.id.nav_totp) })
-    } catch (e: Exception) {
-        val msg = e.message ?: ""
-        if (listOf("6A82", "6A86", "6D00", "6999").any { msg.contains(it) })
-            StatusCard.Row(R.drawable.ic_timer, "On-device OTP", "not on this key",
-                chipText = "—", chipState = StatusCard.State.NEUTRAL, dimmed = true)
-        else
-            StatusCard.Row(R.drawable.ic_timer, "On-device OTP", "error",
-                chipText = "Error", chipState = StatusCard.State.DANGER)
-    }
+    private fun otpPresentRow(label: String, count: Int) = StatusCard.Row(
+        R.drawable.ic_timer,
+        label,
+        "$count credential(s) · tap to manage",
+        chipText = "Present",
+        chipState = StatusCard.State.SUCCESS,
+        onClick = { goToTab(Mode.TOTP, R.id.nav_totp) },
+    )
+
+    private fun otpProbeErrorRow(label: String, error: Exception) = StatusCard.Row(
+        R.drawable.ic_timer,
+        label,
+        error.message ?: "probe failed",
+        chipText = "Error",
+        chipState = StatusCard.State.DANGER,
+    )
 
     /** FIDO2 row for the Info overview — taps through to the FIDO tab. */
     private fun fido2InfoRow(transport: SmartCardTransport,
@@ -1212,9 +1364,12 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         if (nav.selectedItemId == navId) {
             // Already on that tab id; the listener won't fire, so do it directly.
             mode = m; showPane(m)
-            if (m == Mode.TOTP) repo.arm(Token2Repository.PendingOp.Refresh)
-            if (m == Mode.FIDO) fidoRepo.arm(FidoRepository.PendingOp.ReadInfo)
-            rereadUsbForCurrentTab()
+            if (m == Mode.TOTP) {
+                if (armOtpRefresh()) rereadUsbForCurrentTab()
+            } else {
+                if (m == Mode.FIDO) fidoRepo.arm(FidoRepository.PendingOp.ReadInfo)
+                rereadUsbForCurrentTab()
+            }
         } else {
             nav.selectedItemId = navId   // fires listener -> sets mode, arms, re-reads
         }
@@ -1372,6 +1527,57 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     }
 
     // --- NFC tap overlay ---
+    private fun startOathOperation(
+        op: com.token2.lkcompanion.oathui.OathRepository.PendingOp,
+        operation: String,
+        start: () -> Unit,
+    ): Boolean {
+        if (usbBusy || feitianTouchDialog != null || !oathRepo.tryArm(op)) {
+            toast("Another OTP operation is already in progress.")
+            return false
+        }
+        runFeitianTouchAware(operation, start)
+        return true
+    }
+
+    /**
+     * Feitian's USB OTP applet requires physical presence for CALCULATE and
+     * mutating commands. Give the user time to prepare before the short token
+     * timeout starts; LIST itself does not require touch.
+     */
+    private fun runFeitianTouchAware(
+        operation: String,
+        start: () -> Unit,
+    ) {
+        val isFeitian = oathRepo.activeBackend ==
+            com.token2.lkcompanion.oathui.OathRepository.BackendKind.FEITIAN
+        val shouldPrompt = connectedUsbDevice != null && isFeitian
+        if (!shouldPrompt) {
+            start()
+            return
+        }
+
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Touch Feitian key")
+            .setMessage(
+                "After tapping Continue, touch and hold the key when its LED blinks " +
+                    "to $operation. The request expires after a few seconds."
+            )
+            .setPositiveButton("Continue") { _, _ -> start() }
+            .setNegativeButton("Cancel") { _, _ ->
+                oathRepo.cancelPending()
+            }
+            .create()
+        dialog.setOnCancelListener {
+            oathRepo.cancelPending()
+        }
+        dialog.setOnDismissListener {
+            if (feitianTouchDialog === dialog) feitianTouchDialog = null
+        }
+        feitianTouchDialog = dialog
+        dialog.show()
+    }
+
     /**
      * Called after an operation is armed. If a USB key is connected, run the read
      * immediately over USB (no tap needed). Otherwise show the NFC tap overlay and
@@ -2093,10 +2299,14 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                     showNfcOverlay("Hold your key to the phone", "Reading key overview…")
                 }
                 Mode.TOTP -> {
-                    adapter.submit(emptyList())
-                    armedHint.text = "Reading OTP from scratch…"
-                    repo.arm(Token2Repository.PendingOp.Refresh)
-                    showNfcOverlay("Hold your key to the phone", "Reading OTP entries…")
+                    if (!armOtpRefresh()) {
+                        toast("Finish or cancel the current OTP operation before refreshing.")
+                    } else {
+                        adapter.submit(emptyList())
+                        oathAdapter.submit(emptyList())
+                        armedHint.text = "Reading OTP from scratch…"
+                        showNfcOverlay("Hold your key to the phone", "Reading OTP entries…")
+                    }
                 }
                 Mode.FIDO -> {
                     fidoStatusCard.renderHint("Reading FIDO2 from scratch…")

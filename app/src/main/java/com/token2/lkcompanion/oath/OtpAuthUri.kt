@@ -42,8 +42,11 @@ data class OathCredential(
 
     val label: String get() = if (issuer.isNullOrBlank()) account else "$issuer ($account)"
 
-    /** YKOATH credential-name convention: "issuer:account" (issuer optional). */
-    val ykName: String get() = if (issuer.isNullOrBlank()) account else "$issuer:$account"
+    /** YKOATH name, with the standard period prefix for non-30-second TOTP. */
+    val ykName: String get() {
+        val base = if (issuer.isNullOrBlank()) account else "$issuer:$account"
+        return if (type == Type.TOTP && period != 30) "$period/$base" else base
+    }
 
     override fun equals(other: Any?): Boolean =
         other is OathCredential && issuer == other.issuer && account == other.account &&

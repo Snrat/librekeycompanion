@@ -20,16 +20,20 @@ class Token2EntryAdapter(
 ) : RecyclerView.Adapter<Token2EntryAdapter.VH>() {
 
     private var entries: List<Token2Codec.Entry> = emptyList()
-    private var secondsLeft: Int = 30
+    private var unixSeconds: Long = System.currentTimeMillis() / 1000
+    private var generatedAtSeconds: Long = unixSeconds
 
-    fun submit(list: List<Token2Codec.Entry>) {
+    fun submit(list: List<Token2Codec.Entry>, challengeUnixSeconds: Long? = null) {
         entries = list
+        unixSeconds = System.currentTimeMillis() / 1000
+        generatedAtSeconds = challengeUnixSeconds ?:
+            token2ChallengeTime(list, System.currentTimeMillis() / 1000)
         notifyDataSetChanged()
     }
 
     /** Called by a 1s ticker so the countdown bar animates between taps. */
-    fun tick(secondsRemaining: Int) {
-        secondsLeft = secondsRemaining
+    fun tick(nowUnixSeconds: Long) {
+        unixSeconds = nowUnixSeconds
         notifyDataSetChanged()
     }
 
@@ -45,10 +49,17 @@ class Token2EntryAdapter(
         val e = entries[position]
         holder.title.text = if (e.appName.isBlank()) e.accountName else e.appName
         holder.subtitle.text = e.accountName
+        val codeIsCurrent = token2CodeIsCurrent(e, generatedAtSeconds, unixSeconds)
         when {
-            e.otpCode != null -> {
-                holder.code.text = spaceCode(e.otpCode)
+            codeIsCurrent -> {
+                holder.code.text = spaceCode(checkNotNull(e.otpCode))
+                val secondsLeft = com.token2.lkcompanion.oath.OathCore
+                    .secondsRemaining(unixSeconds, e.timestep)
                 holder.meta.text = "TOTP • ${e.timestep}s • ${secondsLeft}s left"
+            }
+            e.otpCode != null -> {
+                holder.code.text = "— — — — — —"
+                holder.meta.text = "Expired • refresh to update"
             }
             !e.isTotp -> {
                 holder.code.text = "— — — — — —"
@@ -61,7 +72,7 @@ class Token2EntryAdapter(
         }
         holder.delete.setOnClickListener { onDelete(e) }
         // Copy is only meaningful when we actually have a code to copy.
-        holder.copy.visibility = if (e.otpCode != null) View.VISIBLE else View.GONE
+        holder.copy.visibility = if (codeIsCurrent) View.VISIBLE else View.GONE
         holder.copy.setOnClickListener { onCopy(e) }
     }
 
@@ -79,3 +90,16 @@ class Token2EntryAdapter(
         val delete: ImageButton = v.findViewById(R.id.entryDelete)
     }
 }
+
+internal fun token2ChallengeTime(
+    entries: List<Token2Codec.Entry>,
+    fallbackUnixSeconds: Long,
+): Long = (entries as? Token2EntrySnapshot)?.challengeUnixSeconds ?: fallbackUnixSeconds
+
+internal fun token2CodeIsCurrent(
+    entry: Token2Codec.Entry,
+    generatedAtUnixSeconds: Long,
+    nowUnixSeconds: Long,
+): Boolean = entry.otpCode != null &&
+    entry.isTotp && entry.timestep > 0 &&
+    generatedAtUnixSeconds / entry.timestep == nowUnixSeconds / entry.timestep
