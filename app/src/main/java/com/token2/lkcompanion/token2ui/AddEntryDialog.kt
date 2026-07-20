@@ -31,6 +31,9 @@ import com.token2.lkcompanion.token2.Token2Codec
  */
 object AddEntryDialog {
 
+    /** Only Feitian imports may change the legacy TOTP/6-digit entry semantics. */
+    enum class ImportPolicy { LEGACY_TOTP, FEITIAN }
+
     private val ALGO_OPTIONS = listOf("SHA1", "SHA256")
     private val PERIOD_OPTIONS = listOf("30", "60")
 
@@ -61,6 +64,7 @@ object AddEntryDialog {
     fun show(
         context: Context,
         onScanRequested: ((Handle) -> Unit)? = null,
+        importPolicy: ImportPolicy = ImportPolicy.LEGACY_TOTP,
         allowedDigits: Set<Int>? = null,
         onReady: (Token2Codec.Entry) -> Boolean,
     ) {
@@ -103,14 +107,16 @@ object AddEntryDialog {
             dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
                 val rawUri = uriField.text.toString().trim()
                 val parsedUri = rawUri.takeIf { it.isNotEmpty() }?.let(::parseOtpauth)
-                if (rawUri.isNotEmpty() && parsedUri == null) {
+                val importFeitianProperties = importPolicy == ImportPolicy.FEITIAN
+                if (importFeitianProperties && rawUri.isNotEmpty() && parsedUri == null) {
                     Toast.makeText(context, "Enter a valid OTP Auth URI.", Toast.LENGTH_LONG).show()
                     return@setOnClickListener
                 }
                 val algo = if (algoSpinner.selectedItemPosition == 1)
                     HashAlgo.SHA256 else HashAlgo.SHA1
                 val period = if (periodSpinner.selectedItemPosition == 1) 60 else 30
-                if (parsedUri?.isHotp == true && parsedUri.counter != 0L) {
+                val isHotp = importFeitianProperties && parsedUri?.isHotp == true
+                if (isHotp && parsedUri?.counter != 0L) {
                     Toast.makeText(
                         context,
                         "HOTP import currently supports only an initial counter of 0.",
@@ -118,8 +124,8 @@ object AddEntryDialog {
                     ).show()
                     return@setOnClickListener
                 }
-                val digits = parsedUri?.digits ?: 6
-                if (allowedDigits != null && digits !in allowedDigits) {
+                val digits = if (importFeitianProperties) parsedUri?.digits ?: 6 else 6
+                if (importFeitianProperties && allowedDigits != null && digits !in allowedDigits) {
                     Toast.makeText(
                         context,
                         "This OTP key supports only ${allowedDigits.sorted().joinToString(" or ")} digits.",
@@ -127,16 +133,26 @@ object AddEntryDialog {
                     ).show()
                     return@setOnClickListener
                 }
-                val entry = buildManual(
-                    appField.text.toString(),
-                    acctField.text.toString(),
-                    secretField.text.toString(),
-                    algo,
-                    period,
-                    isHotp = parsedUri?.isHotp == true,
-                    digits = digits,
-                    counter = parsedUri?.counter ?: 0L,
-                )
+                val entry = if (importFeitianProperties) {
+                    buildFeitianEntry(
+                        appField.text.toString(),
+                        acctField.text.toString(),
+                        secretField.text.toString(),
+                        algo,
+                        period,
+                        isHotp = isHotp,
+                        digits = digits,
+                        counter = if (isHotp) parsedUri?.counter ?: 0L else 0L,
+                    )
+                } else {
+                    buildManual(
+                        appField.text.toString(),
+                        acctField.text.toString(),
+                        secretField.text.toString(),
+                        algo,
+                        period,
+                    )
+                }
                 if (entry == null) {
                     Toast.makeText(context,
                         "Need an account and a valid base32 secret.",
@@ -231,10 +247,34 @@ object AddEntryDialog {
 
     /** Build an entry from the (possibly user-edited) manual fields + selectors. */
     fun buildManual(app: String, account: String, secret: String,
-                    algo: HashAlgo, period: Int, isHotp: Boolean = false,
-                    digits: Int = 6, counter: Long = 0L): Token2Codec.Entry? {
-        if (account.isBlank() || secret.isBlank()) return null
+                    algo: HashAlgo, period: Int): Token2Codec.Entry? =
+        buildEntry(app, account, secret, algo, period, isHotp = false, digits = 6)
+
+    /** Feitian-only extension for HOTP and 8-digit credentials. */
+    private fun buildFeitianEntry(
+        app: String,
+        account: String,
+        secret: String,
+        algo: HashAlgo,
+        period: Int,
+        isHotp: Boolean,
+        digits: Int,
+        counter: Long,
+    ): Token2Codec.Entry? {
         if (isHotp && counter != 0L) return null
+        return buildEntry(app, account, secret, algo, period, isHotp, digits)
+    }
+
+    private fun buildEntry(
+        app: String,
+        account: String,
+        secret: String,
+        algo: HashAlgo,
+        period: Int,
+        isHotp: Boolean,
+        digits: Int,
+    ): Token2Codec.Entry? {
+        if (account.isBlank() || secret.isBlank()) return null
         val decoded = runCatching { Base32.decode(secret) }.getOrNull() ?: return null
         val entry = Token2Codec.Entry(
             type = if (isHotp) Token2Codec.TYPE_HOTP else Token2Codec.TYPE_TOTP,

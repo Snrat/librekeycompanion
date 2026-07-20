@@ -23,4 +23,3 @@ internal fun oathEntryUiState(
         calculateOnRowTap = calculateOnRowTap,
     )
 }
-

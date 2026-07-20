@@ -7,20 +7,6 @@ import com.token2.lkcompanion.transport.AppletUnavailableException
 import com.token2.lkcompanion.transport.SmartCardTransport
 
 /**
- * Entries returned by one ENUM_CODES challenge. Keeping the challenge time with
- * the list prevents cached codes from becoming current again when re-submitted.
- */
-internal class Token2EntrySnapshot(
-    entries: List<Token2Codec.Entry>,
-    val challengeUnixSeconds: Long,
-) : AbstractList<Token2Codec.Entry>() {
-    private val entries = entries.toList()
-
-    override val size: Int get() = entries.size
-    override fun get(index: Int): Token2Codec.Entry = entries[index]
-}
-
-/**
  * Bridges the momentary NFC tap to a browsable UI.
  *
  * NFC sessions exist only for the ~1s the key is on the reader, so we can't keep
@@ -180,13 +166,10 @@ class Token2Repository {
     private val Token2Codec.Entry.label: String
         get() = if (appName.isBlank()) accountName else "$appName / $accountName"
 
-    private fun enumerateSafe(client: Token2Client): List<Token2Codec.Entry> {
-        val challengeUnixSeconds = System.currentTimeMillis() / 1000
-        val entries = try {
-            client.enumerate(challengeUnixSeconds)
+    private fun enumerateSafe(client: Token2Client): List<Token2Codec.Entry> =
+        try {
+            client.enumerate(System.currentTimeMillis() / 1000)
         } catch (e: Token2Exception.EntryNotFound) {
             emptyList()                          // empty token
         }
-        return Token2EntrySnapshot(entries, challengeUnixSeconds)
-    }
 }

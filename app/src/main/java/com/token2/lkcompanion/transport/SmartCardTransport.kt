@@ -64,10 +64,8 @@ class AppletUnavailableException(
 
 /** Preserve the difference between an absent applet and a real transport/card error. */
 internal fun appletSelectionException(aid: ByteArray, statusWord: Int): TransportException {
-    // 6A86 means the SELECT parameters were rejected. Treating it as an absent
-    // applet would hide a malformed/incompatible SELECT and probe another backend.
     val unavailable = when (statusWord) {
-        0x6A82 -> true // File/application not found.
+        0x6A82, 0x6A86 -> true // Application absent or SELECT form unsupported.
         0x6A81, 0x6D00 -> true // SELECT is unavailable on this card/channel.
         0x6999 -> true // Applet selection failed (commonly disabled/unreachable).
         else -> false

@@ -105,7 +105,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     private val usbExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     /** Guard so a replug (attach intent + resume) doesn't open the same device twice. */
     @Volatile private var usbBusy = false
-    private var feitianTouchDialog: androidx.appcompat.app.AlertDialog? = null
+    private var otpOperationDialog: androidx.appcompat.app.AlertDialog? = null
 
     // NFC tap overlay
     private lateinit var nfcOverlay: View
@@ -257,6 +257,12 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                         true
                     }
                 },
+                importPolicy = if (oathTarget ==
+                    com.token2.lkcompanion.oathui.OathRepository.BackendKind.FEITIAN) {
+                    AddEntryDialog.ImportPolicy.FEITIAN
+                } else {
+                    AddEntryDialog.ImportPolicy.LEGACY_TOTP
+                },
                 allowedDigits = oathTarget?.allowedImportDigits,
             )
         }
@@ -406,6 +412,10 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
 
     /** Request a refresh without overwriting a pending/retryable OATH operation. */
     private fun armOtpRefresh(): Boolean {
+        if (!otpIsOath) {
+            repo.arm(Token2Repository.PendingOp.Refresh)
+            return true
+        }
         if (!oathRepo.requestRefresh()) return false
         repo.arm(Token2Repository.PendingOp.Refresh)
         return true
@@ -413,8 +423,11 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
 
     /** Explicit cancellation is separate from refresh so an in-flight APDU stays intact. */
     private fun cancelPendingOtpOperation() {
-        repo.arm(Token2Repository.PendingOp.Refresh)
-        oathRepo.cancelPending()
+        if (otpIsOath) {
+            oathRepo.cancelPending()
+        } else {
+            repo.arm(Token2Repository.PendingOp.Refresh)
+        }
     }
 
     /** 1s ticker drives the TOTP countdown on already-fetched codes. */
@@ -423,7 +436,13 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         val r = object : Runnable {
             override fun run() {
                 val now = System.currentTimeMillis() / 1000
-                if (otpIsOath) oathAdapter.tick(now) else adapter.tick(now)
+                if (otpIsOath) {
+                    oathAdapter.tick(now)
+                } else {
+                    adapter.tick(
+                        com.token2.lkcompanion.oath.OathCore.secondsRemaining(now, 30)
+                    )
+                }
                 handler.postDelayed(this, 1000)
             }
         }
@@ -553,8 +572,8 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         fidoRepo.arm(FidoRepository.PendingOp.ReadInfo)
         fidoRepo.forgetPin()
         runOnUiThread {
-            feitianTouchDialog?.dismiss()
-            feitianTouchDialog = null
+            otpOperationDialog?.dismiss()
+            otpOperationDialog = null
             otpIsOath = false
             if (otpList.adapter !== adapter) otpList.adapter = adapter
             adapter.submit(emptyList())
@@ -676,16 +695,15 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                 ?: throw TransportException("openDevice returned null")
             val hid = Token2HidTransport(conn, hidIface)
             val client = com.token2.lkcompanion.token2.Token2Client.overHid(hid)
-            val challengeUnixSeconds = System.currentTimeMillis() / 1000
             val entries = try {
-                client.enumerate(challengeUnixSeconds)
+                client.enumerate(System.currentTimeMillis() / 1000)
             } catch (e: com.token2.lkcompanion.token2.Token2Exception.EntryNotFound) {
                 emptyList()
             }
             runOnUiThread {
                 otpIsOath = false
                 if (otpList.adapter !== adapter) otpList.adapter = adapter
-                adapter.submit(entries, challengeUnixSeconds)
+                adapter.submit(entries)
                 armedHint.text = "Token2 OTP over USB-HID: ${entries.size} entr" +
                     (if (entries.size == 1) "y" else "ies")
             }
@@ -713,10 +731,30 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
 
     /** Blocking Token2 OTP read + UI update. Caller owns transport lifecycle. */
     private fun readToken2(transport: SmartCardTransport) {
+        // A queued OATH/Feitian mutation has a fixed owner. Do not probe Token2
+        // first, because a valid Token2 key must never hide or consume that state.
+        if (oathRepo.hasPendingOperation()) {
+            readOath(transport)
+            return
+        }
         val result = repo.executeOn(transport)
         // If this isn't a Token2 key, try the standard OATH applet (Pico/YubiKey).
         if (result is Token2Repository.OpResult.NotAToken2Key) {
-            readOath(transport); return
+            if (repo.pending !is Token2Repository.PendingOp.Refresh) {
+                // A Token2 mutation was armed for a different physical key. Cancel
+                // it explicitly instead of carrying it into a later Token2 tap.
+                repo.arm(Token2Repository.PendingOp.Refresh)
+                otpIsOath = false
+                runOnUiThread {
+                    if (otpList.adapter !== adapter) otpList.adapter = adapter
+                    hideNfcOverlay()
+                    armedHint.text =
+                        "Token2 operation cancelled: the presented key is not a Token2 OTP key."
+                }
+                return
+            }
+            readOath(transport)
+            return
         }
         // The current key is Token2; discard capabilities cached from an older
         // OATH/Feitian key before another Add dialog is opened.
@@ -1081,7 +1119,9 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
 
     /** OTP read via the standard OATH applet. Swaps the OTP list to the OATH adapter. */
     private fun readOath(transport: SmartCardTransport) {
+        val hadPendingOperation = oathRepo.hasPendingOperation()
         val result = oathRepo.executeOn(transport)
+        val operationStillPending = oathRepo.hasPendingOperation()
         otpIsOath = true
         runOnUiThread {
             if (otpList.adapter !== oathAdapter) otpList.adapter = oathAdapter
@@ -1119,15 +1159,35 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                         }
                         .show()
                 }
-                is com.token2.lkcompanion.oathui.OathRepository.OpResult.Failure ->
-                    armedHint.text = "Failed: ${result.message}"
+                is com.token2.lkcompanion.oathui.OathRepository.OpResult.Failure -> {
+                    armedHint.text = when {
+                        hadPendingOperation && operationStillPending ->
+                            "Operation still pending: ${result.message}"
+                        hadPendingOperation -> "Operation cancelled: ${result.message}"
+                        else -> "Failed: ${result.message}"
+                    }
+                    if (hadPendingOperation && operationStillPending) {
+                        showPendingOathRecovery(result.message)
+                    }
+                }
                 is com.token2.lkcompanion.oathui.OathRepository.OpResult.TouchTimeout -> {
                     armedHint.text =
                         "The key did not confirm the OTP operation. Retry to continue safely."
                     showFeitianTouchRetry(result.message)
                 }
-                com.token2.lkcompanion.oathui.OathRepository.OpResult.NotAnOathKey ->
-                    armedHint.text = "No OTP applet (Token2, OATH, or Feitian) on this key."
+                com.token2.lkcompanion.oathui.OathRepository.OpResult.NotAnOathKey -> {
+                    if (hadPendingOperation && operationStillPending) {
+                        armedHint.text = "Operation still pending: use the original OTP key."
+                        showPendingOathRecovery(
+                            "The presented key does not provide the required OTP backend."
+                        )
+                    } else if (hadPendingOperation) {
+                        armedHint.text =
+                            "OTP operation cancelled: the presented key uses a different backend."
+                    } else {
+                        armedHint.text = "No OTP applet (Token2, OATH, or Feitian) on this key."
+                    }
+                }
             }
         }
     }
@@ -1150,10 +1210,32 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             oathRepo.cancelPending()
         }
         dialog.setOnDismissListener {
-            if (feitianTouchDialog === dialog) feitianTouchDialog = null
+            if (otpOperationDialog === dialog) otpOperationDialog = null
         }
-        feitianTouchDialog?.dismiss()
-        feitianTouchDialog = dialog
+        otpOperationDialog?.dismiss()
+        otpOperationDialog = dialog
+        dialog.show()
+    }
+
+    /** A replacement cleanup survives wrong-key taps; make that retained state explicit. */
+    private fun showPendingOathRecovery(message: String) {
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Use the original OTP key")
+            .setMessage(
+                "$message\n\nThe recovery operation remains pending. Present the key that " +
+                    "started it, or cancel the operation."
+            )
+            .setPositiveButton("Keep pending", null)
+            .setNegativeButton("Cancel operation") { _, _ ->
+                oathRepo.cancelPending()
+                armedHint.text = "OTP operation cancelled."
+            }
+            .create()
+        dialog.setOnDismissListener {
+            if (otpOperationDialog === dialog) otpOperationDialog = null
+        }
+        otpOperationDialog?.dismiss()
+        otpOperationDialog = dialog
         dialog.show()
     }
 
@@ -1226,29 +1308,16 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             secondary = transport.displayName,
             chipText = "OK", chipState = StatusCard.State.SUCCESS,
         ))
-        rows.add(otpInfoRow(transport))
+        rows.add(oathInfoRow(transport))
+        rows.add(token2InfoRow(transport))
         rows.add(fido2InfoRow(transport, usbDevice))
         rows.add(openPgpInfoRow(transport))
         rows.add(pivInfoRow(transport))
         runOnUiThread { hideNfcOverlay(); infoStatusCard.render(rows) }
     }
 
-    /** Probe OTP protocols in dispatch order and stop at the first supported applet. */
-    private fun otpInfoRow(transport: SmartCardTransport): StatusCard.Row {
-        try {
-            val client = com.token2.lkcompanion.token2.Token2Client.overNfc(transport)
-            val count = try {
-                client.enumerate(System.currentTimeMillis() / 1000).size
-            } catch (_: com.token2.lkcompanion.token2.Token2Exception.EntryNotFound) {
-                0
-            }
-            return otpPresentRow("Token2 OTP", count)
-        } catch (_: AppletUnavailableException) {
-            // Probe the next protocol.
-        } catch (e: Exception) {
-            return otpProbeErrorRow("Token2 OTP", e)
-        }
-
+    /** Preserve the YKOATH status row, with Feitian as its ordered fallback. */
+    private fun oathInfoRow(transport: SmartCardTransport): StatusCard.Row {
         try {
             val applet = OathApplet(transport)
             applet.select()
@@ -1259,8 +1328,8 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             return otpPresentRow("OATH OTP", entries.size)
         } catch (_: AppletUnavailableException) {
             // Probe the next protocol.
-        } catch (e: Exception) {
-            return otpProbeErrorRow("OATH OTP", e)
+        } catch (_: Exception) {
+            return otpUnavailableRow("OATH OTP")
         }
 
         try {
@@ -1272,16 +1341,40 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             )
             return otpPresentRow("Feitian OTP", entries.size)
         } catch (_: AppletUnavailableException) {
-            return StatusCard.Row(
-                R.drawable.ic_timer,
-                "On-device OTP",
-                "not on this key",
-                chipText = "—",
-                chipState = StatusCard.State.NEUTRAL,
-                dimmed = true,
-            )
+            return otpUnavailableRow("OATH OTP")
         } catch (e: Exception) {
             return otpProbeErrorRow("Feitian OTP", e)
+        }
+    }
+
+    /** Original Token2 status row; Feitian probing does not replace or relabel it. */
+    private fun token2InfoRow(transport: SmartCardTransport): StatusCard.Row = try {
+        val client = com.token2.lkcompanion.token2.Token2Client.overNfc(transport)
+        val count = try {
+            client.enumerate(System.currentTimeMillis() / 1000).size
+        } catch (_: com.token2.lkcompanion.token2.Token2Exception.EntryNotFound) {
+            0
+        }
+        StatusCard.Row(
+            R.drawable.ic_timer,
+            "On-device OTP",
+            "$count entry(s) · tap to manage",
+            chipText = "Present",
+            chipState = StatusCard.State.SUCCESS,
+            onClick = { goToTab(Mode.TOTP, R.id.nav_totp) },
+        )
+    } catch (e: Exception) {
+        val message = e.message.orEmpty()
+        if (listOf("6A82", "6A86", "6D00", "6999").any(message::contains)) {
+            otpUnavailableRow("On-device OTP")
+        } else {
+            StatusCard.Row(
+                R.drawable.ic_timer,
+                "On-device OTP",
+                "error",
+                chipText = "Error",
+                chipState = StatusCard.State.DANGER,
+            )
         }
     }
 
@@ -1292,6 +1385,15 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         chipText = "Present",
         chipState = StatusCard.State.SUCCESS,
         onClick = { goToTab(Mode.TOTP, R.id.nav_totp) },
+    )
+
+    private fun otpUnavailableRow(label: String) = StatusCard.Row(
+        R.drawable.ic_timer,
+        label,
+        "not on this key",
+        chipText = "—",
+        chipState = StatusCard.State.NEUTRAL,
+        dimmed = true,
     )
 
     private fun otpProbeErrorRow(label: String, error: Exception) = StatusCard.Row(
@@ -1532,7 +1634,8 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         operation: String,
         start: () -> Unit,
     ): Boolean {
-        if (usbBusy || feitianTouchDialog != null || !oathRepo.tryArm(op)) {
+        if (repo.pending !is Token2Repository.PendingOp.Refresh ||
+            usbBusy || otpOperationDialog != null || !oathRepo.tryArm(op)) {
             toast("Another OTP operation is already in progress.")
             return false
         }
@@ -1572,9 +1675,9 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             oathRepo.cancelPending()
         }
         dialog.setOnDismissListener {
-            if (feitianTouchDialog === dialog) feitianTouchDialog = null
+            if (otpOperationDialog === dialog) otpOperationDialog = null
         }
-        feitianTouchDialog = dialog
+        otpOperationDialog = dialog
         dialog.show()
     }
 

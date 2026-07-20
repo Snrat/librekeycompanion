@@ -167,6 +167,10 @@ class OathRepository {
         return true
     }
 
+    /** True when the next tap belongs to OATH/Feitian and must not probe Token2. */
+    @Synchronized
+    fun hasPendingOperation(): Boolean = pending !is PendingOp.Refresh
+
     /** Explicitly discard a queued or retryable operation while no APDU is running. */
     @Synchronized
     fun cancelPending(): Boolean {
