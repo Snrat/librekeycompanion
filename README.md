@@ -76,7 +76,7 @@ works across keys from different vendors rather than being locked to one brand.
 | Area | State | What you can do |
 |---|---|---|
 | **FIDO2 / CTAP2 management** | ✅ Working (NFC + USB) | Read authenticator info, set / change the PIN, toggle `alwaysUV`, list and delete passkeys (with per-passkey details), enroll / rename / remove fingerprints on bio keys. |
-| **OATH (TOTP / HOTP)** | ✅ Working (NFC + USB) | List credentials with live TOTP codes, add via QR scan or `otpauth://` URI, delete. Standard YKOATH applet. |
+| **OATH (TOTP / HOTP)** | ✅ Working (NFC + USB) | List credentials with live TOTP codes, add via QR scan or `otpauth://` URI, delete. Unlock password-protected applets (VALIDATE). Standard YKOATH applet. |
 | **Token2 on-device OTP** | ✅ Working (NFC + USB) | List / add / delete TOTP & HOTP entries stored on Token2 FIDO keys. |
 | **FIDO MDS lookup** | ✅ Working | Matches a key's AAGUID against the FIDO Alliance Metadata Service to show the device's real name, certification level (e.g. *FIDO Certified L2*) and icon. Ships with bundled data, updatable in-app. |
 | **OpenPGP card** | 🔍 Read-only | Per-slot key existence (Signature / Decryption / Authentication), algorithm & size, generation date, fingerprint, PW1/PW3 retry counters, card serial, cardholder, URL. |
@@ -374,6 +374,13 @@ diagnostic output in any bug report.
 
 **Key blinks once and nothing happens (FIDO-only keys).** These have no CCID
 interface; make sure the vendor ID is covered by `res/xml/usb_device_filter.xml`.
+
+**A YubiKey's OTP entries don't appear / `SW 6982`.** That applet is password
+protected. The app prompts for the password, derives the access key
+(PBKDF2-HMAC-SHA1, 1000 iterations, salted with the key's device ID) and sends
+VALIDATE before its first command. This password is not a PIN — a wrong one
+consumes no retry counter — and the derived key is held only until the key is
+removed. On NFC you are asked to tap again after entering it.
 
 **`adb` over cable is blocked because the key occupies the USB port.** Use wireless
 ADB, or test NFC.

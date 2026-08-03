@@ -571,6 +571,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         oathRepo.onTransportDisconnected()
         fidoRepo.arm(FidoRepository.PendingOp.ReadInfo)
         fidoRepo.forgetPin()
+        oathRepo.forgetPasswords()
         runOnUiThread {
             otpOperationDialog?.dismiss()
             otpOperationDialog = null
@@ -1033,14 +1034,14 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             val err = validate()
             warn.text = err ?: "Ready to apply."
             warn.setTextColor(if (err != null) 0xFFB00020.toInt() else 0x99888888.toInt())
-            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.isEnabled = err == null
+            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)?.isEnabled = err == null
         }
         val listener = android.widget.CompoundButton.OnCheckedChangeListener { _, _ -> refresh() }
         for (r in rows) { r.usb?.setOnCheckedChangeListener(listener); r.nfc?.setOnCheckedChangeListener(listener) }
 
         dialog.setOnShowListener {
             refresh()
-            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
                 val newUsb = usbMask()
                 val newNfc = if (info.nfcAvailable) nfcMask() else null
                 val unchanged = newUsb == info.usbEnabled &&
@@ -1170,6 +1171,14 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                         showPendingOathRecovery(result.message)
                     }
                 }
+                is com.token2.lkcompanion.oathui.OathRepository.OpResult.PasswordRequired -> {
+                    armedHint.text = if (result.wrongPassword) {
+                        "Wrong OATH password."
+                    } else {
+                        "This key's OATH accounts are password protected."
+                    }
+                    promptOathPassword(result)
+                }
                 is com.token2.lkcompanion.oathui.OathRepository.OpResult.TouchTimeout -> {
                     armedHint.text =
                         "The key did not confirm the OTP operation. Retry to continue safely."
@@ -1190,6 +1199,59 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                 }
             }
         }
+    }
+
+    /**
+     * Ask for the OATH password, then resume the still-armed operation. Nothing
+     * is sent to the key from here: the derived access key is cached and the
+     * next connection unlocks the applet before its first command.
+     */
+    private fun promptOathPassword(
+        result: com.token2.lkcompanion.oathui.OathRepository.OpResult.PasswordRequired,
+    ) {
+        val input = android.widget.EditText(this).apply {
+            hint = "OATH password"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val wrap = android.widget.FrameLayout(this).apply {
+            setPadding(pad + pad, pad, pad + pad, 0); addView(input)
+        }
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle(if (result.wrongPassword) "Wrong password" else "OATH password required")
+            .setMessage(
+                (if (result.wrongPassword) "The key rejected that password. " else "") +
+                    "This key's OATH accounts are protected by a password. Entering it " +
+                    "does not consume any retry counter. It is kept only while the key " +
+                    "stays connected."
+            )
+            .setView(wrap)
+            .setPositiveButton("Unlock", null)   // set below, to survive an empty entry
+            .setNegativeButton("Cancel") { _, _ ->
+                oathRepo.cancelPending()
+                armedHint.text = "OATH is locked — password not entered."
+            }
+            .create()
+        dialog.setOnCancelListener { oathRepo.cancelPending() }
+        dialog.setOnDismissListener {
+            if (otpOperationDialog === dialog) otpOperationDialog = null
+        }
+        dialog.setOnShowListener {
+            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+                val password = input.text.toString()
+                if (password.isEmpty()) {
+                    toast("Enter the key's OATH password.")
+                    return@setOnClickListener
+                }
+                oathRepo.rememberPassword(result.deviceIdHex, password)
+                dialog.dismiss()
+                showNfcOverlay("Hold your key to the phone", "Unlocking OATH…")
+            }
+        }
+        otpOperationDialog?.dismiss()
+        otpOperationDialog = dialog
+        dialog.show()
     }
 
     /** Retry a timed-out Feitian operation while the repository still holds it. */
@@ -1320,11 +1382,14 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     private fun oathInfoRow(transport: SmartCardTransport): StatusCard.Row {
         try {
             val applet = OathApplet(transport)
-            applet.select()
-            val entries = applet.list()
+            val info = applet.select()
             oathRepo.noteDetectedBackend(
                 com.token2.lkcompanion.oathui.OathRepository.BackendKind.YKOATH
             )
+            // A password-protected applet answers SELECT but refuses LIST (6982).
+            // Report it as locked; the OTP tab prompts for the password.
+            if (!oathRepo.tryUnlock(applet, info)) return otpLockedRow("OATH OTP")
+            val entries = applet.list()
             return otpPresentRow("OATH OTP", entries.size)
         } catch (_: AppletUnavailableException) {
             // Probe the next protocol.
@@ -1384,6 +1449,15 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         "$count credential(s) · tap to manage",
         chipText = "Present",
         chipState = StatusCard.State.SUCCESS,
+        onClick = { goToTab(Mode.TOTP, R.id.nav_totp) },
+    )
+
+    private fun otpLockedRow(label: String) = StatusCard.Row(
+        R.drawable.ic_timer,
+        label,
+        "password protected · tap to unlock",
+        chipText = "Locked",
+        chipState = StatusCard.State.WARNING,
         onClick = { goToTab(Mode.TOTP, R.id.nav_totp) },
     )
 

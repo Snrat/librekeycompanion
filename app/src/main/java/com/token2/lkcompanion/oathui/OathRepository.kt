@@ -4,6 +4,9 @@ import com.token2.lkcompanion.oath.FeitianOtpApplet
 import com.token2.lkcompanion.oath.FeitianTouchTimeoutException
 import com.token2.lkcompanion.oath.OathApplet
 import com.token2.lkcompanion.oath.OathCredential
+import com.token2.lkcompanion.oath.OathPassword
+import com.token2.lkcompanion.oath.OathPasswordIncorrectException
+import com.token2.lkcompanion.oath.OathPasswordRequiredException
 import com.token2.lkcompanion.transport.AppletUnavailableException
 import com.token2.lkcompanion.transport.SmartCardTransport
 import com.token2.lkcompanion.transport.TransportException
@@ -68,6 +71,15 @@ class OathRepository {
             val existingLabel: String,
             val cred: OathCredential,
             val entries: List<Display>,
+        ) : OpResult()
+        /**
+         * The OATH applet is password protected and no valid password is known.
+         * The armed operation is kept: supply the password with
+         * [rememberPassword] and present the key again to resume it.
+         */
+        data class PasswordRequired(
+            val deviceIdHex: String,
+            val wrongPassword: Boolean,
         ) : OpResult()
         object NotAnOathKey : OpResult()
     }
@@ -146,6 +158,14 @@ class OathRepository {
         }
     }
 
+    /**
+     * Derived access keys by device id, for the lifetime of this connection
+     * only (see [forgetPasswords]). Caching the derived key rather than the
+     * password keeps the plaintext out of memory after derivation, and lets a
+     * re-tap resume an armed operation without prompting again.
+     */
+    private val accessKeys = HashMap<String, ByteArray>()
+
     @Volatile private var pending: PendingOp = PendingOp.Refresh
     @Volatile private var cached: List<Display> = emptyList()
     @Volatile private var cachedBackend: BackendKind? = null
@@ -193,6 +213,60 @@ class OathRepository {
         return true
     }
 
+    /** Derive and cache the access key for [deviceIdHex] from a typed password. */
+    @Synchronized
+    fun rememberPassword(deviceIdHex: String, password: String) {
+        accessKeys[deviceIdHex] =
+            OathPassword.deriveAccessKey(password, OathPassword.fromHex(deviceIdHex))
+    }
+
+    /** Drop every cached access key (key removed, or the user asked to lock). */
+    @Synchronized
+    fun forgetPasswords() {
+        accessKeys.values.forEach { it.fill(0) }
+        accessKeys.clear()
+    }
+
+    @Synchronized
+    fun hasPassword(deviceIdHex: String): Boolean = accessKeys.containsKey(deviceIdHex)
+
+    @Synchronized
+    private fun accessKeyFor(deviceIdHex: String): ByteArray? = accessKeys[deviceIdHex]
+
+    @Synchronized
+    private fun forgetPassword(deviceIdHex: String) {
+        accessKeys.remove(deviceIdHex)?.fill(0)
+    }
+
+    /**
+     * Unlock a freshly selected applet with a cached password, if one is known.
+     * Returns false when the applet stays locked. Used by read-only probes (the
+     * Info tab) that should degrade to "locked" rather than prompt.
+     */
+    fun tryUnlock(applet: OathApplet, info: OathApplet.AppletInfo): Boolean = try {
+        unlockOrThrow(applet, info)
+        true
+    } catch (_: OathPasswordRequiredException) {
+        false
+    } catch (_: OathPasswordIncorrectException) {
+        false
+    }
+
+    private fun unlockOrThrow(applet: OathApplet, info: OathApplet.AppletInfo) {
+        if (!info.challengeRequired) return
+        val deviceIdHex = OathPassword.toHex(info.deviceId)
+        val key = accessKeyFor(deviceIdHex)
+            ?: throw OathPasswordRequiredException(info.deviceId)
+        try {
+            applet.validate(key)
+        } catch (e: OathPasswordIncorrectException) {
+            // The password changed on the key, or was cached from a different
+            // key with the same id. Never keep retrying a rejected key.
+            forgetPassword(deviceIdHex)
+            throw e
+        }
+    }
+
     /** Clear data for a detached key without discarding replacement recovery. */
     @Synchronized
     fun onTransportDisconnected() {
@@ -212,6 +286,11 @@ class OathRepository {
         return try {
             val backend = try {
                 detectBackend(transport)
+            } catch (e: OathPasswordRequiredException) {
+                // Keep the armed operation: it resumes once the password arrives.
+                return OpResult.PasswordRequired(OathPassword.toHex(e.deviceId), false)
+            } catch (e: OathPasswordIncorrectException) {
+                return OpResult.PasswordRequired(OathPassword.toHex(e.deviceId), true)
             } catch (e: Exception) {
                 resetAfterProbeFailure()
                 return OpResult.Failure(e.message ?: e.javaClass.simpleName)
@@ -337,6 +416,13 @@ class OathRepository {
                 is PendingOp.CleanupReplacement ->
                     finishReplacementCleanup(backend, op)
                 }
+            } catch (e: OathPasswordRequiredException) {
+                // The applet re-locked mid-operation (e.g. the channel was reset).
+                // Keep the pending operation so the retry does not repeat a
+                // mutation the key may already have applied.
+                OpResult.PasswordRequired(OathPassword.toHex(e.deviceId), false)
+            } catch (e: OathPasswordIncorrectException) {
+                OpResult.PasswordRequired(OathPassword.toHex(e.deviceId), true)
             } catch (e: FeitianTouchTimeoutException) {
                 // Keep the pending operation intact so the UI can retry without
                 // asking the user to re-enter a credential or confirm deletion.
@@ -406,7 +492,10 @@ class OathRepository {
     private fun detectBackend(transport: SmartCardTransport): Backend? {
         val ykoath = OathApplet(transport)
         try {
-            ykoath.select()
+            // SELECT succeeds on a password-protected applet too, so unlock here:
+            // otherwise the first LIST/CALCULATE fails with SW 6982.
+            val info = ykoath.select()
+            unlockOrThrow(ykoath, info)
             return Backend.Ykoath(ykoath)
         } catch (_: AppletUnavailableException) {
             // Continue only when the card explicitly says this applet is absent.

@@ -1,9 +1,11 @@
 package com.token2.lkcompanion.oath
 
 import com.token2.lkcompanion.transport.Apdu
+import com.token2.lkcompanion.transport.ResponseApdu
 import com.token2.lkcompanion.transport.SmartCardTransport
 import com.token2.lkcompanion.transport.TransportException
 import java.io.ByteArrayOutputStream
+import java.security.SecureRandom
 
 /**
  * Client for the YubiKey/Trussed OATH applet (the on-key TOTP/HOTP store), the
@@ -13,8 +15,15 @@ import java.io.ByteArrayOutputStream
  *
  * Applet AID: A0 00 00 05 27 21 01
  *
- * Implemented: SELECT, LIST, CALCULATE (single + ALL), PUT, DELETE, and the
- * password VALIDATE/SET path. TLV tags follow the YKOATH protocol.
+ * Implemented: SELECT, LIST, CALCULATE, PUT, DELETE and VALIDATE (the password
+ * unlock path). TLV tags follow the YKOATH protocol. SET CODE / RESET are
+ * deliberately not implemented: they are destructive and untested on hardware.
+ *
+ * A password-protected applet still answers SELECT, so SELECT is not a usable
+ * "is it locked" test on its own — it returns a challenge (tag 0x74) and every
+ * later instruction fails with SW 6982 until [validate] succeeds. Instructions
+ * here translate 6982 into [OathPasswordRequiredException] so callers can ask
+ * for a password instead of surfacing a raw status word.
  *
  * STATUS: APDU structure follows the public YKOATH spec; CALCULATE/LIST/DELETE
  * are straightforward and well-covered by the spec, but this path has not been
@@ -46,6 +55,11 @@ class OathApplet(private val transport: SmartCardTransport) {
         private const val TAG_NO_RESPONSE = 0x77
         private const val TAG_PROPERTY = 0x78
         private const val TAG_VERSION = 0x79
+        private const val TAG_ALGORITHM = 0x7B
+
+        // Status words that mean "the applet is locked" / "wrong password".
+        private const val SW_SECURITY_STATUS_NOT_SATISFIED = 0x6982
+        private const val SW_INCORRECT_PARAMETERS = 0x6A80
 
         // Type / algorithm nibbles packed into the KEY tag's first byte
         private const val TYPE_HOTP = 0x10
@@ -58,7 +72,28 @@ class OathApplet(private val transport: SmartCardTransport) {
         private const val MINIMUM_KEY_SIZE = 14
     }
 
-    data class AppletInfo(val version: String, val challengeRequired: Boolean)
+    /**
+     * @param challengeRequired a password is set; [validate] must run before any
+     *   other instruction on this channel.
+     * @param deviceId name TLV (0x71) — the PBKDF2 salt for the access key.
+     * @param challenge the applet's challenge (0x74), empty when unprotected.
+     * @param algorithm HMAC used by VALIDATE (0x7B), SHA-1 when the tag is absent.
+     */
+    data class AppletInfo(
+        val version: String,
+        val challengeRequired: Boolean,
+        val deviceId: ByteArray = ByteArray(0),
+        val challenge: ByteArray = ByteArray(0),
+        val algorithm: Int = OathPassword.ALG_SHA1,
+    )
+
+    /** SELECT state for the currently open channel; cleared by a new SELECT. */
+    private var selected: AppletInfo? = null
+    private var validated = false
+
+    /** Password set on the key and not yet unlocked on this channel. */
+    val isLocked: Boolean
+        get() = selected?.challengeRequired == true && !validated
 
     /** SELECT the OATH applet; returns version + whether a password is set. */
     fun select(): AppletInfo {
@@ -66,14 +101,68 @@ class OathApplet(private val transport: SmartCardTransport) {
         val tlvs = parseTlvs(resp)
         val version = tlvs[TAG_VERSION]?.joinToString(".") { (it.toInt() and 0xFF).toString() }
             ?: "unknown"
-        val challengeRequired = tlvs.containsKey(TAG_CHALLENGE)
-        return AppletInfo(version, challengeRequired)
+        val challenge = tlvs[TAG_CHALLENGE] ?: ByteArray(0)
+        val info = AppletInfo(
+            version = version,
+            challengeRequired = challenge.isNotEmpty(),
+            deviceId = tlvs[TAG_NAME] ?: ByteArray(0),
+            challenge = challenge,
+            algorithm = tlvs[TAG_ALGORITHM]?.firstOrNull()?.toInt()?.and(0xFF)
+                ?: OathPassword.ALG_SHA1,
+        )
+        selected = info
+        validated = !info.challengeRequired
+        return info
+    }
+
+    /**
+     * VALIDATE (INS A3): prove knowledge of the access key, then check the
+     * applet's own proof over a fresh challenge of ours. Must follow a [select]
+     * on the same channel — the challenge is per-selection, and a failed attempt
+     * requires re-selecting before retrying.
+     *
+     * Unlike a PIN, this consumes no retry counter: a wrong password is simply
+     * rejected.
+     *
+     * @throws OathPasswordIncorrectException if the key rejects the access key.
+     */
+    fun validate(accessKey: ByteArray) {
+        val info = selected
+            ?: throw IllegalStateException("SELECT the OATH applet before VALIDATE")
+        if (!info.challengeRequired) { validated = true; return }
+
+        val ourChallenge = ByteArray(8).also { SecureRandom().nextBytes(it) }
+        val body = ByteArrayOutputStream().apply {
+            writeTlv(TAG_RESPONSE_FULL, OathPassword.hmac(info.algorithm, accessKey, info.challenge))
+            writeTlv(TAG_CHALLENGE, ourChallenge)
+        }.toByteArray()
+
+        val resp = transport.transceive(
+            Apdu.build(0x00, INS_VALIDATE, 0x00, 0x00, body, le = 0x00))
+        when {
+            resp.isSuccess -> Unit
+            resp.sw == SW_SECURITY_STATUS_NOT_SATISFIED ||
+                resp.sw == SW_INCORRECT_PARAMETERS ||
+                (resp.sw and 0xFFF0) == 0x63C0 ->
+                throw OathPasswordIncorrectException(info.deviceId)
+            else -> throw TransportException("VALIDATE SW=${"%04X".format(resp.sw)}")
+        }
+
+        // Mutual authentication: the key must answer our challenge with the same
+        // key, otherwise we are talking to something that only pretended to accept.
+        val proof = parseTlvs(resp.data)[TAG_RESPONSE_FULL]
+            ?: throw TransportException("VALIDATE response carried no proof")
+        val expected = OathPassword.hmac(info.algorithm, accessKey, ourChallenge)
+        if (!OathPassword.constantTimeEquals(expected, proof)) {
+            throw TransportException("OATH applet failed mutual authentication")
+        }
+        validated = true
     }
 
     /** LIST credential names + their type/algo nibble. */
     fun list(): List<StoredCredential> {
         val resp = transport.transceive(Apdu.build(0x00, INS_LIST, 0x00, 0x00, le = 0x00))
-        if (!resp.isSuccess) throw TransportException("LIST SW=${"%04X".format(resp.sw)}")
+        requireSuccess(resp, "LIST")
         val result = ArrayList<StoredCredential>()
         var i = 0
         val d = resp.data
@@ -110,7 +199,7 @@ class OathApplet(private val transport: SmartCardTransport) {
         val p2 = if (truncate) 0x01 else 0x00
         val resp = transport.transceive(
             Apdu.build(0x00, INS_CALCULATE, 0x00, p2, body, le = 0x00))
-        if (!resp.isSuccess) throw TransportException("CALCULATE SW=${"%04X".format(resp.sw)}")
+        requireSuccess(resp, "CALCULATE")
         return decodeResponseCode(resp.data)
     }
 
@@ -135,7 +224,7 @@ class OathApplet(private val transport: SmartCardTransport) {
             writeTlv(TAG_KEY, keyTlv)
         }.toByteArray()
         val resp = transport.transceive(Apdu.build(0x00, INS_PUT, 0x00, 0x00, body))
-        if (!resp.isSuccess) throw TransportException("PUT SW=${"%04X".format(resp.sw)}")
+        requireSuccess(resp, "PUT")
     }
 
     fun delete(name: String) {
@@ -143,12 +232,26 @@ class OathApplet(private val transport: SmartCardTransport) {
             writeTlv(TAG_NAME, name.toByteArray(Charsets.UTF_8))
         }.toByteArray()
         val resp = transport.transceive(Apdu.build(0x00, INS_DELETE, 0x00, 0x00, body))
-        if (!resp.isSuccess) throw TransportException("DELETE SW=${"%04X".format(resp.sw)}")
+        requireSuccess(resp, "DELETE")
     }
 
     data class StoredCredential(val name: String, val typeAlgo: Int)
 
     // --- helpers ---
+
+    /**
+     * A locked applet answers every instruction with 6982. Report that as a
+     * password prompt rather than a raw status word, so a protected key is not
+     * mistaken for a broken or absent one.
+     */
+    private fun requireSuccess(resp: ResponseApdu, what: String) {
+        if (resp.isSuccess) return
+        if (resp.sw == SW_SECURITY_STATUS_NOT_SATISFIED) {
+            validated = false
+            throw OathPasswordRequiredException(selected?.deviceId ?: ByteArray(0))
+        }
+        throw TransportException("$what SW=${"%04X".format(resp.sw)}")
+    }
 
     private fun decodeResponseCode(data: ByteArray): String {
         // Response: tag (0x76 truncated / 0x75 full) | len | digits | 4-byte code
