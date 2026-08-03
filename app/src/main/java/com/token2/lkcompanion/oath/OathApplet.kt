@@ -53,6 +53,9 @@ class OathApplet(private val transport: SmartCardTransport) {
         private const val ALG_SHA1 = 0x01
         private const val ALG_SHA256 = 0x02
         private const val ALG_SHA512 = 0x03
+
+        // YKOATH implementations require credential keys to be at least 14 bytes.
+        private const val MINIMUM_KEY_SIZE = 14
     }
 
     data class AppletInfo(val version: String, val challengeRequired: Boolean)
@@ -121,7 +124,12 @@ class OathApplet(private val transport: SmartCardTransport) {
             OathCore.HashAlgo.SHA256 -> ALG_SHA256
             OathCore.HashAlgo.SHA512 -> ALG_SHA512
         }
-        val keyTlv = byteArrayOf(typeByte.toByte(), cred.digits.toByte()) + cred.secret
+        val secret = if (cred.secret.size < MINIMUM_KEY_SIZE) {
+            cred.secret.copyOf(MINIMUM_KEY_SIZE)
+        } else {
+            cred.secret
+        }
+        val keyTlv = byteArrayOf(typeByte.toByte(), cred.digits.toByte()) + secret
         val body = ByteArrayOutputStream().apply {
             writeTlv(TAG_NAME, cred.ykName.toByteArray(Charsets.UTF_8))
             writeTlv(TAG_KEY, keyTlv)

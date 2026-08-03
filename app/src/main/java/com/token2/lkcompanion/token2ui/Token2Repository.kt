@@ -3,6 +3,7 @@ package com.token2.lkcompanion.token2ui
 import com.token2.lkcompanion.token2.Token2Client
 import com.token2.lkcompanion.token2.Token2Codec
 import com.token2.lkcompanion.token2.Token2Exception
+import com.token2.lkcompanion.transport.AppletUnavailableException
 import com.token2.lkcompanion.transport.SmartCardTransport
 
 /**
@@ -76,8 +77,10 @@ class Token2Repository {
     fun executeOn(transport: SmartCardTransport): OpResult {
         val client = try {
             Token2Client.overNfc(transport)
-        } catch (e: Exception) {
+        } catch (e: AppletUnavailableException) {
             return OpResult.NotAToken2Key
+        } catch (e: Exception) {
+            return OpResult.Failure("Token2 probe failed: ${e.message ?: e.javaClass.simpleName}")
         }
 
         val op = pending

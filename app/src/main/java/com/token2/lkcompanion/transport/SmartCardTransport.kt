@@ -50,5 +50,32 @@ data class ResponseApdu(val data: ByteArray, val sw: Int) {
     override fun hashCode(): Int = 31 * data.contentHashCode() + sw
 }
 
-class TransportException(message: String, cause: Throwable? = null) :
+open class TransportException(message: String, cause: Throwable? = null) :
     Exception(message, cause)
+
+/** SELECT reached the card, but the requested applet is not available. */
+class AppletUnavailableException(
+    val aid: ByteArray,
+    val statusWord: Int,
+) : TransportException(
+    "Applet ${aid.joinToString("") { "%02X".format(it) }} unavailable, " +
+        "SW=${"%04X".format(statusWord)}"
+)
+
+/** Preserve the difference between an absent applet and a real transport/card error. */
+internal fun appletSelectionException(aid: ByteArray, statusWord: Int): TransportException {
+    val unavailable = when (statusWord) {
+        0x6A82, 0x6A86 -> true // Application absent or SELECT form unsupported.
+        0x6A81, 0x6D00 -> true // SELECT is unavailable on this card/channel.
+        0x6999 -> true // Applet selection failed (commonly disabled/unreachable).
+        else -> false
+    }
+    return if (unavailable) {
+        AppletUnavailableException(aid.copyOf(), statusWord)
+    } else {
+        TransportException(
+            "SELECT failed for AID ${aid.joinToString("") { "%02X".format(it) }}, " +
+                "SW=${"%04X".format(statusWord)}"
+        )
+    }
+}

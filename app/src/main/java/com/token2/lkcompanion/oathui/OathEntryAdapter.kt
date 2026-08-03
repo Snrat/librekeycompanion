@@ -17,18 +17,20 @@ import com.token2.lkcompanion.R
 class OathEntryAdapter(
     private val onDelete: (OathRepository.Display) -> Unit,
     private val onCopy: (OathRepository.Display) -> Unit,
+    private val onCalculate: (OathRepository.Display) -> Unit,
 ) : RecyclerView.Adapter<OathEntryAdapter.VH>() {
 
     private var entries: List<OathRepository.Display> = emptyList()
-    private var secondsLeft: Int = 30
+    private var unixSeconds: Long = System.currentTimeMillis() / 1000
 
     fun submit(list: List<OathRepository.Display>) {
         entries = list
+        unixSeconds = System.currentTimeMillis() / 1000
         notifyDataSetChanged()
     }
 
-    fun tick(secondsRemaining: Int) {
-        secondsLeft = secondsRemaining
+    fun tick(nowUnixSeconds: Long) {
+        unixSeconds = nowUnixSeconds
         notifyDataSetChanged()
     }
 
@@ -44,23 +46,66 @@ class OathEntryAdapter(
         val e = entries[position]
         holder.title.text = if (e.issuer.isBlank()) e.account else e.issuer
         holder.subtitle.text = e.account
+        val uiState = oathEntryUiState(e, unixSeconds)
         when {
+            uiState.codeIsCurrent -> {
+                holder.code.text = spaceCode(requireNotNull(e.code))
+                if (e.isTotp) {
+                    val secondsLeft = com.token2.lkcompanion.oath.OathCore
+                        .secondsRemaining(unixSeconds, e.period)
+                    holder.meta.text = "TOTP • ${e.period}s • ${secondsLeft}s left"
+                } else {
+                    holder.meta.text = "HOTP • tap row to generate next"
+                }
+            }
             e.code != null -> {
-                holder.code.text = spaceCode(e.code)
-                holder.meta.text = "TOTP • 30s • ${secondsLeft}s left"
+                holder.code.text = "— — — — — —"
+                holder.meta.text = if (uiState.calculateOnRowTap) {
+                    "TOTP • expired • tap row to refresh"
+                } else {
+                    "Expired"
+                }
+            }
+            e.touchRequired -> {
+                holder.code.text = "— — — — — —"
+                holder.meta.text = if (uiState.calculateOnRowTap) {
+                    if (e.isTotp) {
+                        "TOTP • ${e.period}s • tap row to generate"
+                    } else {
+                        "HOTP • tap row to generate"
+                    }
+                } else if (e.isTotp) {
+                    "TOTP • ${e.period}s • touch required"
+                } else {
+                    "HOTP • touch required"
+                }
             }
             !e.isTotp -> {
                 holder.code.text = "— — — — — —"
-                holder.meta.text = "HOTP • not shown"
+                holder.meta.text = "HOTP • select to generate"
             }
             else -> {
                 holder.code.text = "— — — — — —"
-                holder.meta.text = "no code"
+                holder.meta.text = if (uiState.calculateOnRowTap) {
+                    "TOTP • ${e.period}s • tap row to refresh"
+                } else {
+                    "Code unavailable • refresh"
+                }
             }
         }
         holder.delete.setOnClickListener { onDelete(e) }
-        holder.copy.visibility = if (e.code != null) View.VISIBLE else View.GONE
-        holder.copy.setOnClickListener { onCopy(e) }
+        holder.copy.visibility = if (uiState.showCopy) View.VISIBLE else View.GONE
+        holder.copy.setOnClickListener(if (uiState.showCopy) {
+            View.OnClickListener { onCopy(e) }
+        } else {
+            null
+        })
+        holder.itemView.isClickable = uiState.calculateOnRowTap
+        holder.itemView.setOnClickListener(if (uiState.calculateOnRowTap) {
+            View.OnClickListener { onCalculate(e) }
+        } else {
+            null
+        })
     }
 
     private fun spaceCode(code: String): String =

@@ -27,9 +27,7 @@ class NfcTransport(private val isoDep: IsoDep) : SmartCardTransport {
         // applet's SELECT fail identically. The AID is the data; Le is omitted.
         val resp = transceive(Apdu.build(0x00, 0xA4, 0x04, 0x00, aid))
         if (!resp.isSuccess) {
-            throw TransportException(
-                "SELECT failed for AID ${aid.joinToString("") { "%02X".format(it) }}, " +
-                "SW=${"%04X".format(resp.sw)}")
+            throw appletSelectionException(aid, resp.sw)
         }
         return resp.data
     }
