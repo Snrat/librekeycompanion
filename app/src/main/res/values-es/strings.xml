@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Libre Key Companion</string>
+    <string name="tap_prompt">Toca con una llave de seguridad la parte posterior del teléfono (NFC) o conéctala por USB-C.</string>
+    <string name="waiting">Esperando una llave de seguridad…</string>
+
+    <!-- Common -->
+    <string name="action_back">Atrás</string>
+    <string name="action_cancel">Cancelar</string>
+    <string name="action_refresh">Actualizar</string>
+    <string name="action_copy">Copiar</string>
+
+    <!-- Toolbar / overview -->
+    <string name="content_logo">Logotipo</string>
+    <string name="title_key_overview">Resumen de la llave</string>
+    <string name="hint_tap_present_applet">Toca un applet presente para administrarlo.</string>
+
+    <!-- Navigation -->
+    <string name="nav_info">Info</string>
+    <string name="nav_otp">OTP</string>
+    <string name="nav_fido2">FIDO2</string>
+
+    <!-- OTP -->
+    <string name="otp_on_device">OTP en el dispositivo</string>
+    <string name="otp_add_entry">Añadir entrada</string>
+    <string name="otp_tap_key_refresh">Toca con tu llave para actualizar.</string>
+    <string name="otp_scan_qr_code">Escanear código QR</string>
+    <string name="otp_paste_uri_label">…o pega una URI otpauth:// :</string>
+    <!-- otp_uri_hint is omitted here as it is marked translatable="false" in default strings.xml -->
+    <string name="otp_fill_details">— o rellena los detalles —</string>
+    <string name="otp_issuer_hint">Emisor / aplicación (ej. GitHub)</string>
+    <string name="otp_account_hint">Cuenta (ej. tu@ejemplo.com)</string>
+    <string name="otp_secret_hint">Secreto Base32</string>
+    <string name="otp_algorithm">Algoritmo</string>
+    <string name="otp_period_seconds">Período (s)</string>
+    <string name="content_copy_code">Copiar código</string>
+    <string name="content_delete_entry">Eliminar entrada</string>
+
+    <!-- FIDO / passkeys -->
+    <string name="fido_read_status_hint">Toca con tu llave para leer el estado FIDO2.</string>
+    <string name="passkeys_title">Passkeys</string>
+    <string name="passkeys_load_hint">Toca con tu llave para cargar los passkeys.</string>
+    <string name="passkey_tap_for_details">Tocar para más detalles</string>
+    <string name="content_delete_passkey">Eliminar passkey</string>
+
+    <!-- Fingerprints -->
+    <string name="fingerprints_title">Huellas dactilares</string>
+    <string name="fingerprints_enrolled">Huellas registradas</string>
+    <string name="fingerprints_load_hint">Toca con tu llave para cargar las huellas.</string>
+    <string name="content_fingerprint">Huella dactilar</string>
+    <string name="content_add_fingerprint">Añadir huella</string>
+    <string name="fingerprint_tap_to_rename">Tocar para renombrar</string>
+    <string name="content_remove_fingerprint">Eliminar huella</string>
+
+    <!-- NFC overlay -->
+    <string name="content_tap_key">Tocar llave</string>
+    <string name="nfc_hold_key_title">Mantén tu llave contra el teléfono</string>
+    <string name="nfc_waiting_for_tap">Esperando contacto NFC…</string>
+
+    <!-- PIN dialog -->
+    <string name="pin_current">PIN actual</string>
+    <string name="pin_label">PIN</string>
+    <string name="pin_confirm">Confirmar PIN</string>
+    <string name="pin_letters_symbols">Letras y símbolos</string>
+    <string name="pin_remember_session">Recordar PIN en esta sesión</string>
+    <string name="pin_remember_notice">Solo se guarda en la memoria, nunca en el disco.</string>
+
+    <!-- Menu -->
+    <string name="menu_rescan_key">Volver a escanear llave (borrar y recargar)</string>
+    <string name="menu_forget_pin">Olvidar PIN recordado</string>
+    <string name="menu_hid_hotp">HID-HOTP (Token2)</string>
+    <string name="menu_yubikey_apps">Aplicaciones (YubiKey)</string>
+    <string name="menu_usb_diagnostics">Diagnósticos USB</string>
+    <string name="menu_about">Acerca de</string>
+</resources>

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Libre Key Companion</string>
+    <string name="tap_prompt">Halten Sie einen Sicherheitsschlüssel an die Rückseite des Telefons (NFC) oder schließen Sie ihn über USB-C an.</string>
+    <string name="waiting">Warten auf einen Sicherheitsschlüssel…</string>
+
+    <!-- Common -->
+    <string name="action_back">Zurück</string>
+    <string name="action_cancel">Abbrechen</string>
+    <string name="action_refresh">Aktualisieren</string>
+    <string name="action_copy">Kopieren</string>
+
+    <!-- Toolbar / overview -->
+    <string name="content_logo">Logo</string>
+    <string name="title_key_overview">Schlüsselübersicht</string>
+    <string name="hint_tap_present_applet">Tippen Sie auf ein vorhandenes Applet, um es zu verwalten.</string>
+
+    <!-- Navigation -->
+    <string name="nav_info">Info</string>
+    <string name="nav_otp">OTP</string>
+    <string name="nav_fido2">FIDO2</string>
+
+    <!-- OTP -->
+    <string name="otp_on_device">On-Device OTP</string>
+    <string name="otp_add_entry">Eintrag hinzufügen</string>
+    <string name="otp_tap_key_refresh">Halten Sie Ihren Schlüssel an, um zu aktualisieren.</string>
+    <string name="otp_scan_qr_code">QR-Code scannen</string>
+    <string name="otp_paste_uri_label">…oder fügen Sie eine otpauth:// URI ein:</string>
+    <!-- otp_uri_hint is omitted here as it is marked translatable="false" in default strings.xml -->
+    <string name="otp_fill_details">— oder geben Sie die Details ein —</string>
+    <string name="otp_issuer_hint">Aussteller / App (z.B. GitHub)</string>
+    <string name="otp_account_hint">Konto (z.B. du@example.com)</string>
+    <string name="otp_secret_hint">Base32-Geheimnis</string>
+    <string name="otp_algorithm">Algorithmus</string>
+    <string name="otp_period_seconds">Zeitraum (s)</string>
+    <string name="content_copy_code">Code kopieren</string>
+    <string name="content_delete_entry">Eintrag löschen</string>
+
+    <!-- FIDO / passkeys -->
+    <string name="fido_read_status_hint">Halten Sie Ihren Schlüssel an, um den FIDO2-Status zu lesen.</string>
+    <string name="passkeys_title">Passkeys</string>
+    <string name="passkeys_load_hint">Halten Sie Ihren Schlüssel an, um Passkeys zu laden.</string>
+    <string name="passkey_tap_for_details">Für Details tippen</string>
+    <string name="content_delete_passkey">Passkey löschen</string>
+
+    <!-- Fingerprints -->
+    <string name="fingerprints_title">Fingerabdrücke</string>
+    <string name="fingerprints_enrolled">Registrierte Fingerabdrücke</string>
+    <string name="fingerprints_load_hint">Halten Sie Ihren Schlüssel an, um Fingerabdrücke zu laden.</string>
+    <string name="content_fingerprint">Fingerabdruck</string>
+    <string name="content_add_fingerprint">Fingerabdruck hinzufügen</string>
+    <string name="fingerprint_tap_to_rename">Zum Umbenennen tippen</string>
+    <string name="content_remove_fingerprint">Fingerabdruck entfernen</string>
+
+    <!-- NFC overlay -->
+    <string name="content_tap_key">Schlüssel anhalten</string>
+    <string name="nfc_hold_key_title">Halten Sie Ihren Schlüssel an das Telefon</string>
+    <string name="nfc_waiting_for_tap">Warten auf NFC-Verbindung…</string>
+
+    <!-- PIN dialog -->
+    <string name="pin_current">Aktuelle PIN</string>
+    <string name="pin_label">PIN</string>
+    <string name="pin_confirm">PIN bestätigen</string>
+    <string name="pin_letters_symbols">Buchstaben &amp; Symbole</string>
+    <string name="pin_remember_session">PIN für diese Sitzung merken</string>
+    <string name="pin_remember_notice">Wird nur im Arbeitsspeicher gemerkt, niemals auf der Festplatte gespeichert.</string>
+
+    <!-- Menu -->
+    <string name="menu_rescan_key">Schlüssel neu scannen (löschen &amp; neu laden)</string>
+    <string name="menu_forget_pin">Gemerkte PIN vergessen</string>
+    <string name="menu_hid_hotp">HID-HOTP (Token2)</string>
+    <string name="menu_yubikey_apps">Anwendungen (YubiKey)</string>
+    <string name="menu_usb_diagnostics">USB-Diagnose</string>
+    <string name="menu_about">Über</string>
+</resources>
