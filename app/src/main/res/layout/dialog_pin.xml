@@ -13,7 +13,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         app:endIconMode="password_toggle"
-        android:hint="Current PIN">
+        android:hint="@string/pin_current">
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/pinOld"
             android:layout_width="match_parent"
@@ -26,7 +26,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         app:endIconMode="password_toggle"
-        android:hint="PIN">
+        android:hint="@string/pin_label">
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/pinNew"
             android:layout_width="match_parent"
@@ -39,7 +39,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         app:endIconMode="password_toggle"
-        android:hint="Confirm PIN">
+        android:hint="@string/pin_confirm">
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/pinConfirm"
             android:layout_width="match_parent"
@@ -62,7 +62,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:paddingStart="8dp"
-            android:text="Letters &amp; symbols"
+            android:text="@string/pin_letters_symbols"
             android:textSize="14sp" />
     </LinearLayout>
 
@@ -80,14 +80,14 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:paddingStart="8dp"
-            android:text="Remember PIN this session"
+            android:text="@string/pin_remember_session"
             android:textSize="14sp" />
     </LinearLayout>
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Remembered only in memory, never saved to disk."
+        android:text="@string/pin_remember_notice"
         android:textSize="11sp"
         android:alpha="0.6"
         android:paddingTop="2dp" />

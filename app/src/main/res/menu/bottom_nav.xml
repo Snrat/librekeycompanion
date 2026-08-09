@@ -3,13 +3,13 @@
     <item
         android:id="@+id/nav_info"
         android:icon="@drawable/ic_info"
-        android:title="Info" />
+        android:title="@string/nav_info" />
     <item
         android:id="@+id/nav_totp"
         android:icon="@drawable/ic_timer"
-        android:title="OTP" />
+        android:title="@string/nav_otp" />
     <item
         android:id="@+id/nav_fido"
         android:icon="@drawable/ic_key"
-        android:title="FIDO2" />
+        android:title="@string/nav_fido2" />
 </menu>

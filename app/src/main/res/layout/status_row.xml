@@ -41,7 +41,7 @@
         android:layout_height="38dp"
         android:src="@drawable/ic_copy"
         android:background="?android:attr/selectableItemBackgroundBorderless"
-        android:contentDescription="Copy"
+        android:contentDescription="@string/action_copy"
         android:visibility="gone" />
 
     <!-- state chip -->

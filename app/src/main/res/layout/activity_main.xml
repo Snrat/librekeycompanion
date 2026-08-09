@@ -37,7 +37,7 @@
                     android:src="@drawable/ic_logo"
                     android:background="@drawable/logo_border"
                     android:padding="1dp"
-                    android:contentDescription="Logo" />
+                    android:contentDescription="@string/content_logo" />
 
                 <LinearLayout
                     android:layout_width="wrap_content"
@@ -48,7 +48,7 @@
                         android:id="@+id/toolbarTitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Libre Key Companion"
+                        android:text="@string/app_name"
                         android:textColor="#FFFFFF"
                         android:textSize="17sp"
                         android:maxLines="1"
@@ -81,7 +81,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Key overview"
+                    android:text="@string/title_key_overview"
                     android:textStyle="bold"
                     android:textSize="15sp"
                     android:paddingBottom="8dp" />
@@ -102,7 +102,7 @@
                     android:textSize="12sp"
                     android:alpha="0.7"
                     android:paddingTop="10dp"
-                    android:text="Tap a present applet to manage it." />
+                    android:text="@string/hint_tap_present_applet" />
             </LinearLayout>
 
             <!-- ===== TOTP pane ===== -->
@@ -140,7 +140,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="On-device OTP"
+                        android:text="@string/otp_on_device"
                         android:textStyle="bold"
                         android:textSize="15sp" />
 
@@ -151,7 +151,7 @@
                         android:src="@drawable/ic_refresh"
                         app:tint="@color/lkc_text_secondary"
                         android:background="?android:attr/selectableItemBackgroundBorderless"
-                        android:contentDescription="Refresh" />
+                        android:contentDescription="@string/action_refresh" />
 
                     <ImageButton
                         android:id="@+id/btnAdd"
@@ -160,7 +160,7 @@
                         android:src="@drawable/ic_add"
                         app:tint="@color/lkc_accent"
                         android:background="?android:attr/selectableItemBackgroundBorderless"
-                        android:contentDescription="Add entry" />
+                        android:contentDescription="@string/otp_add_entry" />
                 </LinearLayout>
 
                 <TextView
@@ -170,7 +170,7 @@
                     android:textSize="12sp"
                     android:alpha="0.7"
                     android:paddingBottom="4dp"
-                    android:text="Tap your key to refresh." />
+                    android:text="@string/otp_tap_key_refresh" />
 
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/otpList"
@@ -210,7 +210,7 @@
                     android:textSize="12sp"
                     android:alpha="0.7"
                     android:paddingVertical="4dp"
-                    android:text="Tap your key to read FIDO2 status." />
+                    android:text="@string/fido_read_status_hint" />
             </LinearLayout>
         </FrameLayout>
 
@@ -247,11 +247,11 @@
                 android:layout_height="48dp"
                 android:src="@drawable/ic_back"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Back" />
+                android:contentDescription="@string/action_back" />
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Passkeys"
+                android:text="@string/passkeys_title"
                 android:textColor="#FFFFFF"
                 android:textSize="18sp"
                 android:textStyle="bold"
@@ -265,7 +265,7 @@
             android:textSize="12sp"
             android:alpha="0.7"
             android:padding="16dp"
-            android:text="Tap your key to load passkeys." />
+            android:text="@string/passkeys_load_hint" />
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/passkeyList"
@@ -299,12 +299,12 @@
                 android:layout_height="48dp"
                 android:src="@drawable/ic_back"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Back" />
+                android:contentDescription="@string/action_back" />
             <TextView
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:text="Fingerprints"
+                android:text="@string/fingerprints_title"
                 android:textColor="#FFFFFF"
                 android:textSize="18sp"
                 android:textStyle="bold"
@@ -324,7 +324,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Enrolled fingerprints"
+                android:text="@string/fingerprints_enrolled"
                 android:textStyle="bold"
                 android:textSize="15sp" />
 
@@ -335,7 +335,7 @@
                 android:src="@drawable/ic_add"
                 app:tint="@color/lkc_accent"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Add fingerprint" />
+                android:contentDescription="@string/content_add_fingerprint" />
         </LinearLayout>
 
         <TextView
@@ -346,7 +346,7 @@
             android:alpha="0.7"
             android:paddingHorizontal="16dp"
             android:paddingBottom="8dp"
-            android:text="Tap your key to load fingerprints." />
+            android:text="@string/fingerprints_load_hint" />
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/fpList"
@@ -384,14 +384,14 @@
                 android:layout_height="56dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_logo"
-                android:contentDescription="Tap key" />
+                android:contentDescription="@string/content_tap_key" />
         </FrameLayout>
 
         <TextView
             android:id="@+id/nfcOverlayTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Hold your key to the phone"
+            android:text="@string/nfc_hold_key_title"
             android:textColor="@android:color/white"
             android:textSize="20sp"
             android:textStyle="bold" />
@@ -400,7 +400,7 @@
             android:id="@+id/nfcOverlaySubtitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Waiting for NFC tap…"
+            android:text="@string/nfc_waiting_for_tap"
             android:textColor="#CCFFFFFF"
             android:textSize="14sp"
             android:paddingTop="8dp" />
@@ -410,7 +410,7 @@
             style="?android:attr/buttonBarButtonStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Cancel"
+            android:text="@string/action_cancel"
             android:textColor="@android:color/white"
             android:layout_marginTop="24dp" />
     </LinearLayout>
