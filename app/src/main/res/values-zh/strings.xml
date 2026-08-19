@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Libre Key Companion</string>
-    <string name="tap_prompt">将安全密钥贴在手机背面（NFC），或通过 USB-C 插入。</string>
+    <string name="tap_prompt">将安全密钥贴在手机背面(NFC)或者通过 USB-C 插入</string>
     <string name="waiting">正在等待安全密钥…</string>
 
     <!-- Common -->
@@ -13,7 +13,7 @@
     <!-- Toolbar / overview -->
     <string name="content_logo">徽标</string>
     <string name="title_key_overview">密钥概览</string>
-    <string name="hint_tap_present_applet">点击现有的小程序进行管理。</string>
+    <string name="hint_tap_present_applet">点击现有的小程序进行管理</string>
 
     <!-- Navigation -->
     <string name="nav_info">信息</string>
@@ -23,7 +23,7 @@
     <!-- OTP -->
     <string name="otp_on_device">设备上的动态密码</string>
     <string name="otp_add_entry">添加条目</string>
-    <string name="otp_tap_key_refresh">贴靠您的密钥以刷新。</string>
+    <string name="otp_tap_key_refresh">贴靠您的密钥以刷新</string>
     <string name="otp_scan_qr_code">扫描二维码</string>
     <string name="otp_paste_uri_label">…或粘贴 otpauth:// URI：</string>
     <!-- otp_uri_hint is omitted here as it is marked translatable="false" in default strings.xml -->
@@ -37,19 +37,19 @@
     <string name="content_delete_entry">删除条目</string>
 
     <!-- FIDO / passkeys -->
-    <string name="fido_read_status_hint">贴靠您的密钥以读取 FIDO2 状态。</string>
+    <string name="fido_read_status_hint">贴靠您的密钥以读取 FIDO2 状态</string>
     <string name="passkeys_title">通行密钥</string>
-    <string name="passkeys_load_hint">贴靠您的密钥以加载通行密钥。</string>
+    <string name="passkeys_load_hint">贴靠您的密钥以加载通行密钥</string>
     <string name="passkey_tap_for_details">点击查看详情</string>
     <string name="content_delete_passkey">删除通行密钥</string>
 
     <!-- Fingerprints -->
     <string name="fingerprints_title">指纹</string>
     <string name="fingerprints_enrolled">已录入的指纹</string>
-    <string name="fingerprints_load_hint">贴靠您的密钥以加载指纹。</string>
+    <string name="fingerprints_load_hint">贴靠您的密钥以加载指纹</string>
     <string name="content_fingerprint">指纹</string>
     <string name="content_add_fingerprint">添加指纹</string>
-    <string name="fingerprint_tap_to_rename">点击重命名</string>
+    <string name="fingerprint_tap_to_rename">点击以重命名</string>
     <string name="content_remove_fingerprint">移除指纹</string>
 
     <!-- NFC overlay -->
@@ -63,7 +63,7 @@
     <string name="pin_confirm">确认 PIN 码</string>
     <string name="pin_letters_symbols">字母和符号</string>
     <string name="pin_remember_session">在此会话中记住 PIN 码</string>
-    <string name="pin_remember_notice">仅保存在内存中，绝不会保存到磁盘。</string>
+    <string name="pin_remember_notice">仅保存在内存中，绝不会保存到磁盘</string>
 
     <!-- Menu -->
     <string name="menu_rescan_key">重新扫描密钥 (清除并重新加载)</string>
