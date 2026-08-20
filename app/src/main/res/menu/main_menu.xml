@@ -4,26 +4,26 @@
     <item
         android:id="@+id/menu_refresh"
         android:icon="@drawable/ic_refresh_white"
-        android:title="Rescan key (clear &amp; reload)"
+        android:title="@string/menu_rescan_key"
         app:showAsAction="ifRoom" />
     <item
         android:id="@+id/menu_forget_pin"
-        android:title="Forget remembered PIN"
+        android:title="@string/menu_forget_pin"
         app:showAsAction="never" />
     <item
         android:id="@+id/menu_interfaces"
-        android:title="HID-HOTP (Token2)"
+        android:title="@string/menu_hid_hotp"
         app:showAsAction="never" />
     <item
         android:id="@+id/menu_yk_apps"
-        android:title="Applications (YubiKey)"
+        android:title="@string/menu_yubikey_apps"
         app:showAsAction="never" />
     <item
         android:id="@+id/menu_usb_diag"
-        android:title="USB diagnostics"
+        android:title="@string/menu_usb_diagnostics"
         app:showAsAction="never" />
     <item
         android:id="@+id/menu_about"
-        android:title="About"
+        android:title="@string/menu_about"
         app:showAsAction="never" />
 </menu>

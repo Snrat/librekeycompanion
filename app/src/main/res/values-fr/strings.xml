@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Libre Key Companion</string>
+    <string name="tap_prompt">Appuyez une clé de sécurité à l\'arrière du téléphone (NFC) ou branchez-la via USB-C.</string>
+    <string name="waiting">En attente d\'une clé de sécurité…</string>
+
+    <!-- Common -->
+    <string name="action_back">Retour</string>
+    <string name="action_cancel">Annuler</string>
+    <string name="action_refresh">Actualiser</string>
+    <string name="action_copy">Copier</string>
+
+    <!-- Toolbar / overview -->
+    <string name="content_logo">Logo</string>
+    <string name="title_key_overview">Aperçu de la clé</string>
+    <string name="hint_tap_present_applet">Appuyez sur une applet présente pour la gérer.</string>
+
+    <!-- Navigation -->
+    <string name="nav_info">Infos</string>
+    <string name="nav_otp">OTP</string>
+    <string name="nav_fido2">FIDO2</string>
+
+    <!-- OTP -->
+    <string name="otp_on_device">OTP sur l\'appareil</string>
+    <string name="otp_add_entry">Ajouter une entrée</string>
+    <string name="otp_tap_key_refresh">Appuyez sur votre clé pour actualiser.</string>
+    <string name="otp_scan_qr_code">Scanner le code QR</string>
+    <string name="otp_paste_uri_label">…ou coller une URI otpauth:// :</string>
+    <!-- otp_uri_hint is omitted here as it is marked translatable="false" in default strings.xml -->
+    <string name="otp_fill_details">— ou remplissez les détails —</string>
+    <string name="otp_issuer_hint">Émetteur / application (ex. GitHub)</string>
+    <string name="otp_account_hint">Compte (ex. vous@exemple.com)</string>
+    <string name="otp_secret_hint">Secret Base32</string>
+    <string name="otp_algorithm">Algorithme</string>
+    <string name="otp_period_seconds">Période (s)</string>
+    <string name="content_copy_code">Copier le code</string>
+    <string name="content_delete_entry">Supprimer l\'entrée</string>
+
+    <!-- FIDO / passkeys -->
+    <string name="fido_read_status_hint">Appuyez sur votre clé pour lire le statut FIDO2.</string>
+    <string name="passkeys_title">Clés d\'accès</string>
+    <string name="passkeys_load_hint">Appuyez sur votre clé pour charger les clés d\'accès.</string>
+    <string name="passkey_tap_for_details">Appuyez pour les détails</string>
+    <string name="content_delete_passkey">Supprimer la clé d\'accès</string>
+
+    <!-- Fingerprints -->
+    <string name="fingerprints_title">Empreintes digitales</string>
+    <string name="fingerprints_enrolled">Empreintes enregistrées</string>
+    <string name="fingerprints_load_hint">Appuyez sur votre clé pour charger les empreintes.</string>
+    <string name="content_fingerprint">Empreinte digitale</string>
+    <string name="content_add_fingerprint">Ajouter une empreinte</string>
+    <string name="fingerprint_tap_to_rename">Appuyez pour renommer</string>
+    <string name="content_remove_fingerprint">Supprimer l\'empreinte</string>
+
+    <!-- NFC overlay -->
+    <string name="content_tap_key">Appuyez sur la clé</string>
+    <string name="nfc_hold_key_title">Maintenez votre clé contre le téléphone</string>
+    <string name="nfc_waiting_for_tap">En attente du contact NFC…</string>
+
+    <!-- PIN dialog -->
+    <string name="pin_current">Code PIN actuel</string>
+    <string name="pin_label">Code PIN</string>
+    <string name="pin_confirm">Confirmer le code PIN</string>
+    <string name="pin_letters_symbols">Lettres &amp; symboles</string>
+    <string name="pin_remember_session">Mémoriser le PIN pour cette session</string>
+    <string name="pin_remember_notice">Mémorisé uniquement en mémoire, jamais enregistré sur le disque.</string>
+
+    <!-- Menu -->
+    <string name="menu_rescan_key">Re-scanner la clé (effacer &amp; recharger)</string>
+    <string name="menu_forget_pin">Oublier le PIN mémorisé</string>
+    <string name="menu_hid_hotp">HID-HOTP (Token2)</string>
+    <string name="menu_yubikey_apps">Applications (YubiKey)</string>
+    <string name="menu_usb_diagnostics">Diagnostics USB</string>
+    <string name="menu_about">À propos</string>
+</resources>

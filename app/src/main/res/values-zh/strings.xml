@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Libre Key Companion</string>
+    <string name="tap_prompt">将安全密钥贴在手机背面(NFC)或者通过 USB-C 插入</string>
+    <string name="waiting">正在等待安全密钥…</string>
+
+    <!-- Common -->
+    <string name="action_back">返回</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_refresh">刷新</string>
+    <string name="action_copy">复制</string>
+
+    <!-- Toolbar / overview -->
+    <string name="content_logo">徽标</string>
+    <string name="title_key_overview">密钥概览</string>
+    <string name="hint_tap_present_applet">点击现有的小程序进行管理</string>
+
+    <!-- Navigation -->
+    <string name="nav_info">信息</string>
+    <string name="nav_otp">动态密码 (OTP)</string>
+    <string name="nav_fido2">FIDO2</string>
+
+    <!-- OTP -->
+    <string name="otp_on_device">设备上的动态密码</string>
+    <string name="otp_add_entry">添加条目</string>
+    <string name="otp_tap_key_refresh">贴靠您的密钥以刷新</string>
+    <string name="otp_scan_qr_code">扫描二维码</string>
+    <string name="otp_paste_uri_label">…或粘贴 otpauth:// URI：</string>
+    <!-- otp_uri_hint is omitted here as it is marked translatable="false" in default strings.xml -->
+    <string name="otp_fill_details">— 或填写详情 —</string>
+    <string name="otp_issuer_hint">发行方 / 应用 (例如 GitHub)</string>
+    <string name="otp_account_hint">账户 (例如 you@example.com)</string>
+    <string name="otp_secret_hint">Base32 密钥</string>
+    <string name="otp_algorithm">算法</string>
+    <string name="otp_period_seconds">周期 (秒)</string>
+    <string name="content_copy_code">复制代码</string>
+    <string name="content_delete_entry">删除条目</string>
+
+    <!-- FIDO / passkeys -->
+    <string name="fido_read_status_hint">贴靠您的密钥以读取 FIDO2 状态</string>
+    <string name="passkeys_title">通行密钥</string>
+    <string name="passkeys_load_hint">贴靠您的密钥以加载通行密钥</string>
+    <string name="passkey_tap_for_details">点击查看详情</string>
+    <string name="content_delete_passkey">删除通行密钥</string>
+
+    <!-- Fingerprints -->
+    <string name="fingerprints_title">指纹</string>
+    <string name="fingerprints_enrolled">已录入的指纹</string>
+    <string name="fingerprints_load_hint">贴靠您的密钥以加载指纹</string>
+    <string name="content_fingerprint">指纹</string>
+    <string name="content_add_fingerprint">添加指纹</string>
+    <string name="fingerprint_tap_to_rename">点击以重命名</string>
+    <string name="content_remove_fingerprint">移除指纹</string>
+
+    <!-- NFC overlay -->
+    <string name="content_tap_key">贴靠密钥</string>
+    <string name="nfc_hold_key_title">将密钥紧贴手机</string>
+    <string name="nfc_waiting_for_tap">等待 NFC 贴靠…</string>
+
+    <!-- PIN dialog -->
+    <string name="pin_current">当前 PIN 码</string>
+    <string name="pin_label">PIN 码</string>
+    <string name="pin_confirm">确认 PIN 码</string>
+    <string name="pin_letters_symbols">字母和符号</string>
+    <string name="pin_remember_session">在此会话中记住 PIN 码</string>
+    <string name="pin_remember_notice">仅保存在内存中，绝不会保存到磁盘</string>
+
+    <!-- Menu -->
+    <string name="menu_rescan_key">重新扫描密钥 (清除并重新加载)</string>
+    <string name="menu_forget_pin">忘记已记住的 PIN 码</string>
+    <string name="menu_hid_hotp">HID-HOTP (Token2)</string>
+    <string name="menu_yubikey_apps">应用程序 (YubiKey)</string>
+    <string name="menu_usb_diagnostics">USB 诊断</string>
+    <string name="menu_about">关于</string>
+</resources>

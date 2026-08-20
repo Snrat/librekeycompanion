@@ -27,7 +27,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Tap for details"
+            android:text="@string/passkey_tap_for_details"
             android:textSize="11sp"
             android:alpha="0.45" />
     </LinearLayout>
@@ -38,5 +38,5 @@
         android:layout_height="44dp"
         android:src="@drawable/ic_delete"
         android:background="?android:attr/selectableItemBackgroundBorderless"
-        android:contentDescription="Delete passkey" />
+        android:contentDescription="@string/content_delete_passkey" />
 </LinearLayout>

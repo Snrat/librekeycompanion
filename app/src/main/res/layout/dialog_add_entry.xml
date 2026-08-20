@@ -13,7 +13,7 @@
         android:id="@+id/btnScanQr"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Scan QR code"
+        android:text="@string/otp_scan_qr_code"
         android:drawableStart="@drawable/ic_qr"
         android:drawablePadding="8dp"
         android:layout_marginBottom="8dp" />
@@ -21,7 +21,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="…or paste an otpauth:// URI:"
+        android:text="@string/otp_paste_uri_label"
         android:textSize="13sp"
         android:alpha="0.8"
         android:paddingBottom="2dp" />
@@ -30,14 +30,14 @@
         android:id="@+id/fieldUri"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="otpauth://totp/Issuer:user?secret=…"
+        android:hint="@string/otp_uri_hint"
         android:inputType="textUri"
         android:textSize="13sp" />
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="— or fill in the details —"
+        android:text="@string/otp_fill_details"
         android:gravity="center"
         android:alpha="0.6"
         android:paddingVertical="8dp" />
@@ -46,21 +46,21 @@
         android:id="@+id/fieldApp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Issuer / app (e.g. GitHub)"
+        android:hint="@string/otp_issuer_hint"
         android:inputType="text" />
 
     <EditText
         android:id="@+id/fieldAccount"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Account (e.g. you@example.com)"
+        android:hint="@string/otp_account_hint"
         android:inputType="text" />
 
     <EditText
         android:id="@+id/fieldSecret"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Base32 secret"
+        android:hint="@string/otp_secret_hint"
         android:inputType="textNoSuggestions" />
 
     <LinearLayout
@@ -77,7 +77,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Algorithm"
+                android:text="@string/otp_algorithm"
                 android:textSize="12sp"
                 android:alpha="0.7" />
             <Spinner
@@ -95,7 +95,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Period (s)"
+                android:text="@string/otp_period_seconds"
                 android:textSize="12sp"
                 android:alpha="0.7" />
             <Spinner
