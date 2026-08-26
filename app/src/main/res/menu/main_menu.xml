@@ -19,6 +19,10 @@
         android:title="@string/menu_yubikey_apps"
         app:showAsAction="never" />
     <item
+        android:id="@+id/menu_otp_pin"
+        android:title="@string/menu_otp_pin"
+        app:showAsAction="never" />
+    <item
         android:id="@+id/menu_usb_diag"
         android:title="@string/menu_usb_diagnostics"
         app:showAsAction="never" />

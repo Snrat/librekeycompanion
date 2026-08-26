@@ -149,5 +149,15 @@ sealed class Token2Exception(message: String) : Exception(message) {
     object NotEnoughSpace : Token2Exception("not enough space on device")
     object HidNotSupported : Token2Exception("HOTP-over-HID not supported on this model")
     object ButtonPressRequired : Token2Exception("timed out waiting for button press")
+    // --- OTP PIN (privacy protection) ---
+    object PinNotVerified : Token2Exception("OTP PIN not verified or incorrect")
+    object PinBlocked : Token2Exception("OTP PIN is locked out; erase-all is the only recovery")
+    object PinWrongState : Token2Exception("command not allowed in the current PIN state")
+    class PinUnsupported(val sw: Int, val ctx: String = "") :
+        Token2Exception(
+            "OTP PIN command failed (SW=%04X%s)".format(sw, if (ctx.isNotEmpty()) " at $ctx" else "")
+        )
+    object PinTransportUnavailable :
+        Token2Exception("OTP PIN commands require the CCID/NFC transport")
     class BadStatus(val sw: Int) : Token2Exception("unexpected status %04X".format(sw))
 }

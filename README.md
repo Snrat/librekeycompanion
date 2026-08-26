@@ -77,13 +77,38 @@ works across keys from different vendors rather than being locked to one brand.
 |---|---|---|
 | **FIDO2 / CTAP2 management** | ✅ Working (NFC + USB) | Read authenticator info, set / change the PIN, toggle `alwaysUV`, list and delete passkeys (with per-passkey details), enroll / rename / remove fingerprints on bio keys. |
 | **OATH (TOTP / HOTP)** | ✅ Working (NFC + USB) | List credentials with live TOTP codes, add via QR scan or `otpauth://` URI, delete. Unlock password-protected applets (VALIDATE). Standard YKOATH applet. |
-| **Token2 on-device OTP** | ✅ Working (NFC + USB) | List / add / delete TOTP & HOTP entries stored on Token2 FIDO keys. |
+| **Token2 on-device OTP** | ✅ Working (NFC + USB) | List / add / delete TOTP & HOTP entries stored on Token2 FIDO keys. On keys running **firmware R3.4 or later**, also set / change / remove the on-device **OTP PIN** (privacy protection) and unlock PIN-protected codes for viewing, adding and deleting (NFC + USB-CCID). |
 | **FIDO MDS lookup** | ✅ Working | Matches a key's AAGUID against the FIDO Alliance Metadata Service to show the device's real name, certification level (e.g. *FIDO Certified L2*) and icon. Ships with bundled data, updatable in-app. |
 | **OpenPGP card** | 🔍 Read-only | Per-slot key existence (Signature / Decryption / Authentication), algorithm & size, generation date, fingerprint, PW1/PW3 retry counters, card serial, cardholder, URL. |
 | **PIV** | 🔍 Read-only | Per-slot (9A / 9C / 9D / 9E) X.509 certificate details: subject, issuer, key type & size, validity, serial, SHA-256 fingerprint; PIN/PUK retry counts; card GUID. |
 
 The OTP tab **auto-detects** which applet a key uses (Token2 vs OATH) and routes
 list/add/delete accordingly, so one tab serves both.
+
+### Token2 OTP PIN protection (firmware R3.4+)
+
+Token2 keys running **firmware R3.4 or later** can lock their on-device OTP store
+behind a **PIN** ("privacy protection"). When a key has this feature, the app can:
+
+- **Set, change and remove** the OTP PIN, with a numeric or full-keyboard entry
+  toggle that is remembered between prompts (via the *OTP PIN (Token2)* menu item).
+- **Unlock protected codes for viewing.** A protected key shows a lock button on
+  the OTP tab; tapping it prompts for the PIN (or uses a remembered one), after
+  which codes are listed and can be added or deleted normally. Tapping the lock
+  again forgets the PIN and closes the key's read window.
+- **Remember the PIN in memory** for the session (never written to disk), so you
+  don't retype it on every tap; *Forget remembered PIN* or the lock button clears it.
+
+The PIN travels over an authenticated ECDH session (P-256 → HMAC-SHA256 session
+keys → AES-256-CBC), matching the Token2 protocol; protected reads and writes are
+sealed/verified with those session keys. This works over **NFC and USB-CCID** — the
+OTP applet does not accept these commands over the USB-HID channel. Keys on older
+firmware simply don't expose the feature, and the app hides it for them.
+
+> ⚠️ Like any PIN, the OTP PIN has a retry counter. Entering the wrong PIN
+> decrements it, and **exhausting the retries locks the OTP store — the only
+> recovery is to erase all OTP profiles on the key.** The app shows the attempts
+> remaining and never auto-retries a wrong PIN. Test on a spare key first.
 
 **Not implemented** (intentionally — these are security-critical write/crypto
 operations that belong behind careful, hardware-tested work): OpenPGP key
@@ -301,6 +326,10 @@ with the wrong secret:**
 - **FIDO PIN:** entering the wrong FIDO2 PIN consumes the retry counter. Exhausting
   it **locks the key and wipes its passkeys.** Test PIN features on a disposable key
   first.
+- **Token2 OTP PIN (R3.4+):** entering the wrong OTP PIN consumes its retry counter.
+  Exhausting it **locks the on-device OTP store; the only recovery is erasing all OTP
+  profiles.** The app displays the attempts remaining and never auto-retries a wrong
+  PIN, but treat it with the same care as the FIDO PIN.
 - **OpenPGP / PIV PINs:** the app *reads* PW1/PW3 and PIN/PUK retry counters
   non-destructively (it never submits a guess just to read the count). It does not
   currently change these PINs.
@@ -321,7 +350,9 @@ crypto are validated against:
 - **CTAP2 PIN/UV** — the PIN/UV auth protocol crypto against published CTAP 2.1
   vectors; CTAPHID framing against the spec.
 - **Token2** — OTP codec and the ECDH-P256 / AES-CBC seed crypto against known
-  vectors.
+  vectors; the OTP-PIN session crypto (HMAC-SHA256 session-key derivation, the
+  AES-CBC verify/set/change constructions) against the reference implementation's
+  test vectors.
 - **PIV** — the X.509/DER certificate parser against real certificates generated
   with OpenSSL (RSA-2048/4096, EC P-256/P-384), every field cross-checked.
 - **OpenPGP** — the Application-Related-Data parser against a spec-accurate object
