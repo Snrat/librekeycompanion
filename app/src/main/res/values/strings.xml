@@ -71,6 +71,9 @@
     <string name="menu_forget_pin">Forget remembered PIN</string>
     <string name="menu_hid_hotp">HID-HOTP (Token2)</string>
     <string name="menu_yubikey_apps">Applications (YubiKey)</string>
+    <string name="menu_otp_pin">OTP PIN (Token2)</string>
+    <string name="menu_otp_lock">Lock OTP codes</string>
+    <string name="otp_lock_toggle">Lock or unlock OTP codes</string>
     <string name="menu_usb_diagnostics">USB diagnostics</string>
     <string name="menu_about">About</string>
 </resources>

@@ -154,6 +154,16 @@
                         android:contentDescription="@string/action_refresh" />
 
                     <ImageButton
+                        android:id="@+id/btnOtpLock"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:visibility="gone"
+                        android:src="@drawable/ic_lock_open"
+                        app:tint="@color/lkc_text_secondary"
+                        android:background="?android:attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/otp_lock_toggle" />
+
+                    <ImageButton
                         android:id="@+id/btnAdd"
                         android:layout_width="44dp"
                         android:layout_height="44dp"

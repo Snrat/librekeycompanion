@@ -22,7 +22,14 @@ import com.token2.lkcompanion.transport.TransportException
 class Token2Client private constructor(
     private val send: (apdu: ByteArray, buttonWait: Boolean) -> ByteArray,
     private val isNfc: Boolean,
+    // Raw transceive that returns (data, sw) WITHOUT throwing — PIN commands need
+    // to inspect status words (6982/6983/6A81/6A86) rather than have them thrown.
+    private val sendRaw: ((apdu: ByteArray) -> Pair<ByteArray, Int>)? = null,
 ) {
+    // Set after a successful verifyOtpPin: on a protected key, enumerate/read
+    // responses come back encrypted (IV || EncData || Auth) under these keys and
+    // must be decrypted before parsing.
+    private var pinSession: Token2PinCrypto.SessionKeys? = null
     companion object {
         val MGMT_AID = byteArrayOf(0xF0.toByte(), 0x00, 0x00, 0x01, 0x4F, 0x74, 0x70, 0x01)
         val FIDO_AID = byteArrayOf(0xA0.toByte(), 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01)
@@ -43,24 +50,52 @@ class Token2Client private constructor(
         private val WRITE_SEED = intArrayOf(0x80, 0xC5, 0x05, 0x02)
         private val GET_INFO = intArrayOf(0x80, 0x33, 0x00, 0x00)
 
+        // --- OTP PIN / privacy protection (R3.4 / manual V1.2) ---
+        private val READ_OTP_PIN_FLAG = intArrayOf(0x80, 0xC5, 0x05, 0x04)
+        private val SET_OTP_PIN = intArrayOf(0x80, 0xC5, 0x05, 0x05)
+        private val VERIFY_OTP_PIN = intArrayOf(0x80, 0xC5, 0x05, 0x06)
+        private val CHANGE_OTP_PIN = intArrayOf(0x80, 0xC5, 0x05, 0x08)
+        private val READ_AGREEMENT_PUBKEY = intArrayOf(0x80, 0xC5, 0x05, 0x09)
+        /** Lc for the short PIN-flag read (status only). */
+        private const val PIN_FLAG_LC_BASE = 0x04
+        /** Lc for the PIN-flag read that also returns the verify challenge (IV||EncRand). */
+        private const val PIN_FLAG_LC_CHALLENGE = 0x29
+        /** Lc for the "prime" flag read done before the agreement handshake. */
+        private const val PIN_FLAG_LC_PRIME = 0x09
+
         /** Build over NFC/PC-SC; selects the management applet up front. */
         fun overNfc(transport: SmartCardTransport): Token2Client {
             transport.selectApplet(MGMT_AID)
-            return Token2Client({ apdu, _ ->
-                val r = transport.transceive(apdu)
-                if (!r.isSuccess) mapStatus(r.sw)
-                r.data
-            }, isNfc = true)
+            return Token2Client(
+                send = { apdu, _ ->
+                    val r = transport.transceive(apdu)
+                    if (!r.isSuccess) mapStatus(r.sw)
+                    r.data
+                },
+                isNfc = true,
+                sendRaw = { apdu ->
+                    val r = transport.transceive(apdu)
+                    Pair(r.data, r.sw)
+                },
+            )
         }
 
-        /** Build over USB-HID. */
+        /** Build over USB-HID. (PIN commands are unsupported over HID; sendRaw is null.) */
         fun overHid(hid: Token2HidTransport): Token2Client =
-            Token2Client({ apdu, buttonWait -> hid.sendCommand(apdu, buttonWait) }, isNfc = false)
+            Token2Client(
+                send = { apdu, buttonWait -> hid.sendCommand(apdu, buttonWait) },
+                isNfc = false,
+            )
 
         private fun mapStatus(sw: Int): Nothing = when (sw) {
             0x6A80, 0x6A83 -> throw Token2Exception.EntryNotFound
             0x6A84 -> throw Token2Exception.NotEnoughSpace
             0x6FF9 -> throw Token2Exception.ButtonPressRequired
+            // 6982 = security status not satisfied. On a PIN-protected key, an
+            // ordinary read (ENUM_CODES) returns this until the PIN window is
+            // opened — surface it as PinNotVerified so the UI can prompt to unlock.
+            0x6982 -> throw Token2Exception.PinNotVerified
+            0x6983 -> throw Token2Exception.PinBlocked
             // NOTE: 6A86 is "incorrect P1/P2 / instruction not supported on this
             // model". The spec only ties it to the HOTP-over-HID *config* commands;
             // do NOT relabel it as a HID error on other commands. Surface the SW.
@@ -156,14 +191,39 @@ class Token2Client private constructor(
     /** Enumerate all entries, following ENUM_CODES_CONTINUE paging (§6.1). */
     fun enumerate(timestampSeconds: Long): List<Token2Codec.Entry> {
         val all = ArrayList<Token2Codec.Entry>()
-        var resp = send(apduExt(ENUM_CODES, Token2Codec.serializeReadAll(timestampSeconds)), false)
-        while (true) {
-            val (entries, more) = Token2Codec.parseEnumPage(resp, fullDecode = false)
-            all.addAll(entries)
-            if (!more) break
-            resp = send(apduExt(ENUM_CODES_CONTINUE, Token2Codec.serializeContinue(timestampSeconds)), false)
+        var resp = maybeDecryptPage(send(apduExt(ENUM_CODES, Token2Codec.serializeReadAll(timestampSeconds)), false))
+        try {
+            while (true) {
+                val (entries, more) = Token2Codec.parseEnumPage(resp, fullDecode = false)
+                all.addAll(entries)
+                if (!more) break
+                resp = maybeDecryptPage(send(apduExt(ENUM_CODES_CONTINUE, Token2Codec.serializeContinue(timestampSeconds)), false))
+            }
+        } catch (e: Token2Codec.ParseException) {
+            // If we couldn't parse and no PIN session is active, the key likely
+            // returned an encrypted page from a still-open window we don't hold
+            // keys for (e.g. after a local lock over a persistent USB link).
+            // Surface as needs-verify instead of crashing on garbage.
+            if (pinSession == null) throw Token2Exception.PinNotVerified
+            throw e
         }
         return all
+    }
+
+    /**
+     * On a PIN-protected key (after verifyOtpPin), enumerate/read responses come
+     * back as IV(16) || EncData || Auth(16) under the session keys. Decrypt and
+     * MAC-check them; otherwise pass through unchanged.
+     */
+    private fun maybeDecryptPage(data: ByteArray): ByteArray {
+        val keys = pinSession ?: return data
+        if (data.size < 48) return data          // too short to be an enc page
+        val iv = data.copyOfRange(0, 16)
+        val enc = data.copyOfRange(16, data.size - 16)
+        val auth = data.copyOfRange(data.size - 16, data.size)
+        if (!Token2PinCrypto.verifyAuthTag(keys.mac, enc, auth))
+            throw Token2Exception.BadStatus(0x6982)   // MAC mismatch -> treat as not-verified
+        return Token2PinCrypto.sessionDecrypt(keys.enc, iv, enc)
     }
 
     /** Read one entry, always including the code (waits for button on HID). */
@@ -173,18 +233,31 @@ class Token2Client private constructor(
         return Token2Codec.parseEnumPage(resp, fullDecode = true).first.first()
     }
 
-    /** Write or update an entry (encrypted, IV-1). */
-    fun writeEntry(entry: Token2Codec.Entry) {
-        val cleartext = Token2Codec.serializeWriteEntry(entry)
-        val blob = Token2Crypto.encryptPayload(getEcdhPubkey(), cleartext, Token2Crypto.IV_WRITE_SEED)
-        send(apduExt(WRITE_SEED, blob), false)
+    /**
+     * Seal a write cleartext, choosing the format by PIN state (matches the
+     * reference `seal`): if a PIN window is open (pinSession set), the device
+     * rejects GET_ECDH_PUBKEY with 6A81, so reuse the verified session keys in
+     * the authenticated protected-write format; otherwise build the standard
+     * ephemeral-ECDH seed blob.
+     */
+    private fun sealWrite(cleartext: ByteArray): ByteArray {
+        val keys = pinSession
+        return if (keys != null)
+            Token2PinCrypto.buildProtectedWriteData(keys, cleartext)
+        else
+            Token2Crypto.encryptPayload(getEcdhPubkey(), cleartext, Token2Crypto.IV_WRITE_SEED)
     }
 
-    /** Delete an entry (encrypted empty-seed write, IV-1). */
+    /** Write or update an entry (encrypted, IV-1; protected format when PIN-verified). */
+    fun writeEntry(entry: Token2Codec.Entry) {
+        val cleartext = Token2Codec.serializeWriteEntry(entry)
+        send(apduExt(WRITE_SEED, sealWrite(cleartext)), false)
+    }
+
+    /** Delete an entry (encrypted empty-seed write, IV-1; protected when PIN-verified). */
     fun deleteEntry(app: String, acct: String) {
         val cleartext = Token2Codec.serializeDeleteEntry(app, acct)
-        val blob = Token2Crypto.encryptPayload(getEcdhPubkey(), cleartext, Token2Crypto.IV_WRITE_SEED)
-        send(apduExt(WRITE_SEED, blob), false)
+        send(apduExt(WRITE_SEED, sealWrite(cleartext)), false)
     }
 
     /** Erase all — WRITE_SEED with empty data; requires button on HID (§6.5). */
@@ -249,5 +322,176 @@ class Token2Client private constructor(
             0x01, disableMask.toByte(),
         )
         send(apdu, false)
+    }
+
+    // ===== OTP PIN (privacy protection) ======================================
+    // These run ONLY over CCID/NFC (sendRaw != null). Over USB-HID the OTP applet
+    // answers with 6A86, so the client is built without sendRaw for HID and these
+    // throw PinTransportUnavailable.
+
+    /** Parsed READ_OTP_PIN_FLAG head, plus the optional verify challenge. */
+    data class PinFlag(
+        val algId: Int,
+        val retriesLeft: Int,
+        val pinLen: Int,
+        val maxRetries: Int,
+        /** (IV, EncRand), present only on the Lc=0x29 read. */
+        val challenge: Pair<ByteArray, ByteArray>?,
+    ) {
+        val isSet: Boolean get() = pinLen > 0
+    }
+
+    private fun raw(apdu: ByteArray): Pair<ByteArray, Int> {
+        val fn = sendRaw ?: throw Token2Exception.PinTransportUnavailable
+        return fn(apdu)
+    }
+
+    /** Map a PIN-command status word to a typed error (or return on success). */
+    private fun checkPin(sw: Int, ctx: String = "") {
+        when (sw) {
+            0x9000, 0x6100, 0x6101 -> return   // 61xx = more data available (chaining)
+            0x6982 -> throw Token2Exception.PinNotVerified
+            0x6983 -> throw Token2Exception.PinBlocked
+            0x6A81 -> throw Token2Exception.PinWrongState
+            0x6A86, 0x6AF8 -> throw Token2Exception.PinUnsupported(sw, ctx)
+            else -> {
+                // 63xx = verification failed, low nibble often = retries left.
+                // Treat as a wrong PIN so the UI re-prompts with the count.
+                if ((sw and 0xFF00) == 0x6300) throw Token2Exception.PinNotVerified
+                if ((sw and 0xFF00) == 0x6100) return
+                throw Token2Exception.BadStatus(sw)
+            }
+        }
+    }
+
+    private fun readPinFlagApdu(lc: Int): ByteArray {
+        // The flag read is NOT a bare case-2 command. Per the reference and R3.4
+        // device probing, it is `CLA INS P1 P2 len || len*0x00` — the Lc byte
+        // followed by a body of `len` placeholder zero bytes. A bodyless read in
+        // any form is rejected with the proprietary 6AF8 (which we'd otherwise
+        // mislabel as "PIN unsupported"). The applet overwrites the placeholder
+        // and returns `len` bytes of flag data.
+        val out = ArrayList<Byte>(5 + lc)
+        READ_OTP_PIN_FLAG.forEach { out.add(it.toByte()) }
+        out.add(lc.toByte())
+        repeat(lc) { out.add(0x00) }
+        return out.toByteArray()
+    }
+
+    private fun parsePinFlag(data: ByteArray): PinFlag {
+        fun at(i: Int) = if (i < data.size) data[i].toInt() and 0xFF else 0
+        // Fixed head: AlgId, RetriesLeft, PinLen, MaxRetries.
+        val flag = PinFlag(
+            algId = at(0),
+            retriesLeft = at(1),
+            pinLen = at(2),
+            maxRetries = at(3),
+            challenge = if (data.size >= 41) {
+                // On the Lc=0x29 read: IV(16) EncRand(16) starting at offset 9.
+                Pair(data.copyOfRange(9, 25), data.copyOfRange(25, 41))
+            } else null,
+        )
+        return flag
+    }
+
+    /** READ_OTP_PIN_FLAG status only (Lc=0x04). */
+    fun pinStatus(): PinFlag {
+        // Use Lc=0x09 (the form the reference's working trace uses) for a reliable
+        // full head. The short Lc=0x04 read can come back truncated on some
+        // firmware, making a *set* PIN look unset.
+        val (data, sw) = raw(readPinFlagApdu(PIN_FLAG_LC_PRIME))
+        checkPin(sw, "status-read")
+        return parsePinFlag(data)
+    }
+
+    /**
+     * Establish an authenticated ECDH session. Returns the session keys.
+     * Sequence (per reference): a "prime" flag read (Lc=0x09) FIRST — skipping it
+     * makes a later SET fail with 6985 — then READ_AGREEMENT_PUBKEY with the host
+     * pubkey; response is devPub(64) || sig(132). The P-521 device signature is
+     * NOT verified (matches the reference; confidentiality holds, authenticity is
+     * not cryptographically checked).
+     */
+    private fun openPinSession(): Token2PinCrypto.SessionKeys {
+        // Prime read.
+        val (_, psw) = raw(readPinFlagApdu(PIN_FLAG_LC_PRIME))
+        checkPin(psw, "prime-read(0x09)")
+
+        // Two-step handshake: generate the host keypair, send its public X||Y in
+        // READ_AGREEMENT_PUBKEY, then derive session keys from the device's
+        // returned pubkey using the SAME host private key.
+        val hs = Token2PinCrypto.beginHandshake()
+        val (resp, sw) = raw(pinApdu(READ_AGREEMENT_PUBKEY, hs.hostPubXy))
+        checkPin(sw, "agreement-pubkey")
+        if (resp.size < 64) throw Token2Exception.BadStatus(sw)
+        val devXy = resp.copyOfRange(0, 64)
+        return hs.deriveWith(devXy)
+    }
+
+    /** SET_OTP_PIN from the unprotected state. */
+    fun setOtpPin(pin: ByteArray) {
+        val keys = openPinSession()
+        val data = Token2PinCrypto.buildSetPinData(keys, pin)
+        val apdu = pinApdu(SET_OTP_PIN, data)
+        val (_, sw) = raw(apdu)
+        checkPin(sw, "set-pin")
+    }
+
+    /** VERIFY_OTP_PIN — opens the read window for this connection. */
+    fun verifyOtpPin(pin: ByteArray) {
+        val keys = openPinSession()
+        val (data, sw) = raw(readPinFlagApdu(PIN_FLAG_LC_CHALLENGE))
+        checkPin(sw, "verify-challenge-read")
+        val flag = parsePinFlag(data)
+        val ch = flag.challenge ?: throw Token2Exception.BadStatus(sw)
+        val rand = Token2PinCrypto.sessionDecryptRaw(keys.enc, ch.first, ch.second)
+        if (rand.size != 16) throw Token2Exception.BadStatus(sw)
+        val proof = Token2PinCrypto.buildVerifyPinData(keys, pin, rand)
+        val (_, vsw) = raw(pinApdu(VERIFY_OTP_PIN, proof))
+        checkPin(vsw, "verify-proof")
+        pinSession = keys   // retain for decrypting protected enumerate/read pages
+    }
+
+    /** CHANGE_OTP_PIN (newPin empty = remove). Requires the current PIN. */
+    fun changeOtpPin(currentPin: ByteArray, newPin: ByteArray) {
+        val keys = openPinSession()
+        // The challenge read primes the change proof, like verify.
+        val (data, sw) = raw(readPinFlagApdu(PIN_FLAG_LC_CHALLENGE))
+        checkPin(sw)
+        val data2 = Token2PinCrypto.buildChangePinData(keys, newPin, currentPin)
+        val (_, csw) = raw(pinApdu(CHANGE_OTP_PIN, data2))
+        checkPin(csw)
+    }
+
+    fun removeOtpPin(currentPin: ByteArray) = changeOtpPin(currentPin, ByteArray(0))
+
+    /**
+     * Close the device's read/write verify window: VERIFY header + single 0x00
+     * body (80 C5 05 06 01 00), short-form Lc. After this the key returns 6982 to
+     * reads until re-verified. Also drops our local session keys.
+     */
+    fun lockOtpPin() {
+        pinSession = null
+        val fn = sendRaw ?: return   // only meaningful over CCID/NFC
+        val apdu = byteArrayOf(
+            VERIFY_OTP_PIN[0].toByte(), VERIFY_OTP_PIN[1].toByte(),
+            VERIFY_OTP_PIN[2].toByte(), VERIFY_OTP_PIN[3].toByte(),
+            0x01, 0x00,
+        )
+        try { fn(apdu) } catch (_: Exception) { /* best effort */ }
+    }
+
+    private fun pinApdu(cmd: IntArray, data: ByteArray): ByteArray {
+        // Extended Lc (00 hi lo) — the form the reference build_apdu uses for the
+        // SET/VERIFY/CHANGE PIN commands (their data fields exceed the short-form
+        // comfort zone and the applet expects extended here).
+        require(data.size <= 0xFFFF) { "PIN data field too long" }
+        val out = ArrayList<Byte>(7 + data.size)
+        cmd.forEach { out.add(it.toByte()) }
+        out.add(0x00)
+        out.add(((data.size ushr 8) and 0xFF).toByte())
+        out.add((data.size and 0xFF).toByte())
+        data.forEach { out.add(it) }
+        return out.toByteArray()
     }
 }

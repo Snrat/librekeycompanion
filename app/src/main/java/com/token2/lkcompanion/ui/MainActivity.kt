@@ -35,6 +35,7 @@ import com.token2.lkcompanion.token2ui.AddEntryDialog
 import com.token2.lkcompanion.token2ui.Token2EntryAdapter
 import com.token2.lkcompanion.oathui.OathEntryAdapter
 import com.token2.lkcompanion.token2ui.Token2Repository
+import com.token2.lkcompanion.token2ui.Token2PinRepository.OpResult as PinResult
 import com.token2.lkcompanion.transport.NfcTransport
 import com.token2.lkcompanion.transport.AppletUnavailableException
 import com.token2.lkcompanion.transport.SmartCardTransport
@@ -67,6 +68,11 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     // tap regardless of tab; `managementPending` gates that one-shot dispatch.
     private val managementRepo = com.token2.lkcompanion.management.ManagementRepository()
     @Volatile private var managementPending = false
+
+    // OTP PIN (privacy protection). Runs over CCID/NFC on the next tap;
+    // pinPending gates the one-shot dispatch.
+    private val pinRepo = com.token2.lkcompanion.token2ui.Token2PinRepository()
+    @Volatile private var pinPending = false
     /** Whether the current OTP backend uses the shared smart-card OTP UI. */
     private var otpIsOath = false
 
@@ -198,6 +204,23 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                 return@setOnClickListener
             }
             showNfcOverlay("Hold your key to the phone", "Reading OTP entries…")
+        }
+        findViewById<android.widget.ImageButton>(R.id.btnOtpLock).setOnClickListener {
+            if (otpUnlocked) {
+                // Lock: forget PIN + close device window on next contact.
+                rememberedOtpPin = null
+                repo.lockNow()
+                otpUnlocked = false
+                adapter.submit(emptyList())
+                armedHint.text = "🔒 OTP codes locked — tap the lock to unlock."
+                updateOtpLockButton()
+                repo.arm(Token2Repository.PendingOp.Refresh)
+                if (connectedUsbDevice != null) rereadUsbForCurrentTab()
+                toast("OTP codes locked.")
+            } else {
+                // Unlock: prompt for the PIN (or use remembered), then read.
+                promptUnlockPin()
+            }
         }
         findViewById<android.widget.ImageButton>(R.id.btnAdd).setOnClickListener {
             // Freeze the destination while the dialog is open. A QR scan may leave
@@ -627,6 +650,9 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                 if (managementPending) {
                     managementPending = false
                     runManagementTap(transport)
+                } else if (pinPending) {
+                    pinPending = false
+                    runPinTap(transport)
                 } else if (mode == Mode.INFO) readInfoOverlay(transport, device)
                 else readToken2(transport)
             } finally {
@@ -723,6 +749,11 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             Thread { try { runManagementTap(transport) } finally { transport.close() } }.start()
             return
         }
+        if (pinPending) {
+            pinPending = false
+            Thread { try { runPinTap(transport) } finally { transport.close() } }.start()
+            return
+        }
         when (mode) {
             Mode.FIDO -> { runFidoTap(transport); return }
             Mode.INFO -> { Thread { try { readInfoOverlay(transport) } finally { transport.close() } }.start(); return }
@@ -767,6 +798,14 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             when (result) {
                 is Token2Repository.OpResult.Success -> {
                     adapter.submit(result.entries)
+                    if (repo.hasPin()) {
+                        otpProtected = true; otpUnlocked = true
+                    } else {
+                        // A clean read with no PIN in play — this key isn't
+                        // protected (or we're not tracking one); hide the lock.
+                        otpProtected = false; otpUnlocked = false
+                    }
+                    updateOtpLockButton()
                     armedHint.text = "${result.message}. ${result.entries.size} entr" +
                         if (result.entries.size == 1) "y." else "ies."
                 }
@@ -790,6 +829,24 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                 is Token2Repository.OpResult.Config -> {
                     adapter.submit(repo.cachedEntries)
                     showInterfaceDialog(result.iface)
+                }
+                Token2Repository.OpResult.PinRequired -> {
+                    otpProtected = true; otpUnlocked = false; updateOtpLockButton()
+                    armedHint.text = "🔒 Codes are PIN-protected — tap the lock to unlock."
+                    adapter.submit(emptyList())   // don't leave stale/foreign entries
+                    promptUnlockPin()
+                }
+                is Token2Repository.OpResult.PinWrong -> {
+                    otpProtected = true; otpUnlocked = false; updateOtpLockButton()
+                    if (rememberedOtpPin != null) {
+                        rememberedOtpPin = null
+                    }
+                    val left = result.retriesLeft
+                    val max = result.maxRetries
+                    val detail = if (left != null && max != null) " — $left of $max attempts left"
+                        else if (left != null) " — $left attempts left" else ""
+                    toast("Wrong OTP PIN$detail")
+                    promptUnlockPin()
                 }
                 Token2Repository.OpResult.NotAToken2Key -> { /* handled above */ }
             }
@@ -1118,6 +1175,254 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         } catch (e: Exception) { null }
     }
 
+    // ===== OTP PIN (privacy protection) =====================================
+
+    /** Runs the armed PIN op against a tapped/plugged key over CCID/NFC. */
+    private fun runPinTap(transport: SmartCardTransport) {
+        val result = try {
+            val client = com.token2.lkcompanion.token2.Token2Client.overNfc(transport)
+            pinRepo.executeOn(client)
+        } catch (e: Exception) {
+            com.token2.lkcompanion.token2ui.Token2PinRepository.OpResult.Failure(
+                e.message ?: e.javaClass.simpleName)
+        }
+        runOnUiThread {
+            hideNfcOverlay()
+            when (result) {
+                is PinResult.Status -> showPinStatusDialog(result.flag)
+                is PinResult.Success -> toast(result.message)
+                is PinResult.WrongPin -> toast(
+                    "Wrong PIN" + (result.retriesLeft?.let { " — $it retries left" } ?: ""))
+                PinResult.Blocked -> com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                    .setTitle("PIN locked out")
+                    .setMessage("The OTP PIN is locked after too many wrong attempts. " +
+                        "The only recovery is to erase all TOTP profiles on the key.")
+                    .setPositiveButton("OK", null).show()
+                is PinResult.Unsupported -> toast("OTP PIN command failed: ${result.detail}")
+                PinResult.WrongTransport -> toast("OTP PIN needs the CCID/NFC transport (not USB-HID).")
+                is PinResult.Failure -> toast("Failed: ${result.message}")
+            }
+        }
+    }
+
+    /** Arm a PIN op and prompt for a tap (works over NFC or USB-CCID). */
+    private fun armPin(op: com.token2.lkcompanion.token2ui.Token2PinRepository.PendingOp,
+                       overlaySub: String) {
+        pinRepo.arm(op)
+        pinPending = true
+        showNfcOverlay("Present your key", overlaySub)
+        // If a key is already on USB, drive it now.
+        if (connectedUsbDevice != null) rereadUsbForCurrentTab()
+    }
+
+    private fun showPinStatusDialog(flag: com.token2.lkcompanion.token2.Token2Client.PinFlag) {
+        val savedNote = if (rememberedOtpPin != null) "\n\nA PIN is remembered until the app closes." else ""
+        val msg = if (flag.isSet)
+            "OTP PIN: set\nLength: ${flag.pinLen} byte(s)\n" +
+                "Retries left: ${flag.retriesLeft} of ${flag.maxRetries}" + savedNote
+        else "OTP PIN: not set"
+        val b = com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("OTP PIN status")
+            .setMessage(msg)
+            .setNegativeButton("Close", null)
+        if (flag.isSet) {
+            b.setPositiveButton("Change") { _, _ -> promptChangePin() }
+            b.setNeutralButton("Remove") { _, _ -> promptRemovePin() }
+        } else {
+            b.setPositiveButton("Set PIN") { _, _ -> promptSetPin() }
+        }
+        b.show()
+        // (To forget a remembered PIN, use the "Forget remembered PIN" menu item.)
+    }
+
+    /** A single masked PIN input dialog. onOk gets the entered string. */
+    // Persisted keypad-type preference (numeric vs full keyboard), like the FIDO2
+    // PIN entry. Stored in SharedPreferences so it survives app restarts.
+    private val pinPrefs by lazy { getSharedPreferences("otp_pin_prefs", MODE_PRIVATE) }
+    private var pinAlphaMode: Boolean
+        get() = pinPrefs.getBoolean("alpha_keypad", false)
+        set(v) { pinPrefs.edit().putBoolean("alpha_keypad", v).apply() }
+
+    // Optional remembered OTP PIN — held in memory only (like the FIDO2 PIN),
+    // never written to disk. Survives while the app runs so codes unlock without
+    // re-typing, but is gone when the app is closed.
+    @Volatile private var rememberedOtpPin: String? = null
+
+    // OTP-tab lock button state: whether the current key is PIN-protected, and
+    // whether we currently hold a verified PIN for it.
+    @Volatile private var otpProtected = false
+    @Volatile private var otpUnlocked = false
+
+    /**
+     * A PIN entry dialog reusing the shared dialog_pin layout, with the
+     * numeric/full-keyboard switch pre-set from the remembered preference and
+     * saved when changed. `fields` picks which of the three inputs are shown.
+     * `onOk` receives (old, new, confirm) — unused fields come back blank.
+     */
+    private fun pinDialog(
+        title: String,
+        showOld: Boolean,
+        showConfirm: Boolean,
+        showNew: Boolean = true,
+        newHint: String? = null,
+        onOk: (old: String, new: String, confirm: String) -> Unit,
+    ) {
+        val view = layoutInflater.inflate(R.layout.dialog_pin, null)
+        val tilOld = view.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilOld)
+        val tilNew = view.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilNew)
+        val tilConfirm = view.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilConfirm)
+        val oldField = view.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.pinOld)
+        val newField = view.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.pinNew)
+        val confirmField = view.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.pinConfirm)
+        val switchAlpha = view.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchAlpha)
+        val switchRemember = view.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchRemember)
+        switchRemember.visibility = View.GONE   // OTP PIN isn't cached in-session here
+
+        tilOld.visibility = if (showOld) View.VISIBLE else View.GONE
+        tilNew.visibility = if (showNew) View.VISIBLE else View.GONE
+        tilConfirm.visibility = if (showConfirm) View.VISIBLE else View.GONE
+        if (newHint != null) tilNew.hint = newHint
+
+        // Apply the remembered keypad type up-front, and persist changes.
+        switchAlpha.isChecked = pinAlphaMode
+        setAlphaMode(oldField, pinAlphaMode)
+        setAlphaMode(newField, pinAlphaMode)
+        setAlphaMode(confirmField, pinAlphaMode)
+        switchAlpha.setOnCheckedChangeListener { _, checked ->
+            pinAlphaMode = checked   // remember it
+            setAlphaMode(oldField, checked)
+            setAlphaMode(newField, checked)
+            setAlphaMode(confirmField, checked)
+        }
+
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle(title)
+            .setView(view)
+            .setPositiveButton("OK") { _, _ ->
+                onOk(
+                    oldField.text?.toString() ?: "",
+                    newField.text?.toString() ?: "",
+                    confirmField.text?.toString() ?: "",
+                )
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun promptSetPin() {
+        pinDialog("Set OTP PIN", showOld = false, showConfirm = true) { _, new, confirm ->
+            val err = com.token2.lkcompanion.token2.Token2PinValidator.validate(new)
+            if (err != null) { toast(err); return@pinDialog }
+            if (new != confirm) { toast("PINs did not match."); return@pinDialog }
+            armPin(com.token2.lkcompanion.token2ui.Token2PinRepository.PendingOp.SetPin(new),
+                "Setting OTP PIN…")
+        }
+    }
+
+    private fun promptChangePin() {
+        pinDialog("Change OTP PIN", showOld = true, showConfirm = true) { old, new, confirm ->
+            if (old.isBlank()) { toast("Enter your current PIN."); return@pinDialog }
+            val err = com.token2.lkcompanion.token2.Token2PinValidator.validate(new)
+            if (err != null) { toast(err); return@pinDialog }
+            if (new != confirm) { toast("New PINs did not match."); return@pinDialog }
+            armPin(com.token2.lkcompanion.token2ui.Token2PinRepository.PendingOp
+                .ChangePin(old, new), "Changing OTP PIN…")
+        }
+    }
+
+    private fun promptRemovePin() {
+        pinDialog("Remove OTP PIN", showOld = true, showConfirm = false, showNew = false) { old, _, _ ->
+            if (old.isBlank()) { toast("Enter your current PIN."); return@pinDialog }
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("Remove PIN?")
+                .setMessage("This removes PIN protection from the key's TOTP store.")
+                .setPositiveButton("Remove") { _, _ ->
+                    armPin(com.token2.lkcompanion.token2ui.Token2PinRepository.PendingOp
+                        .RemovePin(old), "Removing OTP PIN…")
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    /**
+     * A PIN-protected key returned "not verified" on read. Prompt for the PIN
+     * (with the remembered keypad type), stash it, re-arm a refresh, and prompt a
+     * re-tap so enumerate opens the verify window on the next session.
+     */
+    private fun promptUnlockPin() {
+        // If a PIN is remembered, use it silently — no prompt.
+        rememberedOtpPin?.let { saved ->
+            repo.supplyPin(saved)
+            repo.arm(Token2Repository.PendingOp.Refresh)
+            showNfcOverlay("Present your key", "Unlocking codes…")
+            if (connectedUsbDevice != null) rereadUsbForCurrentTab()
+            return
+        }
+
+        val view = layoutInflater.inflate(R.layout.dialog_pin, null)
+        view.findViewById<View>(R.id.tilOld).visibility = View.GONE
+        view.findViewById<View>(R.id.tilConfirm).visibility = View.GONE
+        // Hide the shared layout's session-only "remember" row (its notice says
+        // "never saved to disk", which wouldn't match a persisted OTP PIN). We add
+        // our own accurately-worded checkbox below instead.
+        (view.findViewById<View>(R.id.switchRemember).parent as? View)?.visibility = View.GONE
+        val til = view.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.tilNew)
+        til.hint = "OTP PIN"
+        val field = view.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.pinNew)
+        val switchAlpha = view.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switchAlpha)
+        switchAlpha.isChecked = pinAlphaMode
+        setAlphaMode(field, pinAlphaMode)
+        switchAlpha.setOnCheckedChangeListener { _, checked ->
+            pinAlphaMode = checked; setAlphaMode(field, checked)
+        }
+
+        // Our own remember checkbox, appended under the inflated view.
+        val rememberBox = android.widget.CheckBox(this).apply {
+            text = "Remember PIN until app closes"
+        }
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            addView(view)
+            val pad = (24 * resources.displayMetrics.density).toInt()
+            addView(rememberBox, android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(pad, 0, pad, 0)
+                })
+        }
+
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("Enter OTP PIN")
+            .setMessage("This key's TOTP codes are PIN-protected. Enter the PIN, then " +
+                "present the key again to unlock.")
+            .setView(container)
+            .setPositiveButton("Unlock") { _, _ ->
+                val pin = field.text?.toString() ?: ""
+                if (pin.isBlank()) { toast("Enter your OTP PIN."); return@setPositiveButton }
+                if (rememberBox.isChecked) rememberedOtpPin = pin
+                repo.supplyPin(pin)
+                repo.arm(Token2Repository.PendingOp.Refresh)
+                showNfcOverlay("Present your key", "Unlocking codes…")
+                if (connectedUsbDevice != null) rereadUsbForCurrentTab()
+            }
+            .setNegativeButton("Cancel") { _, _ ->
+                repo.clearPin()
+                armedHint.text = "Codes are PIN-protected — unlock to view."
+            }
+            .show()
+    }
+
+    /** Reflect OTP protected/unlocked state on the lock button. */
+    private fun updateOtpLockButton() {
+        val btn = findViewById<android.widget.ImageButton>(R.id.btnOtpLock)
+        if (!otpProtected) { btn.visibility = View.GONE; return }
+        btn.visibility = View.VISIBLE
+        btn.setImageResource(if (otpUnlocked) R.drawable.ic_lock_open else R.drawable.ic_lock)
+        btn.contentDescription = getString(
+            if (otpUnlocked) R.string.otp_lock_toggle else R.string.otp_lock_toggle)
+    }
+
     /** OTP read via the standard OATH applet. Swaps the OTP list to the OATH adapter. */
     private fun readOath(transport: SmartCardTransport) {
         val hadPendingOperation = oathRepo.hasPendingOperation()
@@ -1419,6 +1724,17 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             client.enumerate(System.currentTimeMillis() / 1000).size
         } catch (_: com.token2.lkcompanion.token2.Token2Exception.EntryNotFound) {
             0
+        } catch (_: com.token2.lkcompanion.token2.Token2Exception.PinNotVerified) {
+            // Protected key: can't count without the PIN. Show a protected row that
+            // sends the user to the OTP tab to unlock, rather than an error.
+            return StatusCard.Row(
+                R.drawable.ic_timer,
+                "On-device OTP",
+                "PIN-protected · tap to unlock",
+                chipText = "Protected",
+                chipState = StatusCard.State.WARNING,
+                onClick = { goToTab(Mode.TOTP, R.id.nav_totp) },
+            )
         }
         StatusCard.Row(
             R.drawable.ic_timer,
@@ -2497,7 +2813,10 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         }
         R.id.menu_forget_pin -> {
             fidoRepo.forgetPin()
-            toast("Remembered PIN cleared")
+            val hadOtp = rememberedOtpPin != null
+            rememberedOtpPin = null
+            repo.clearPin()
+            toast(if (hadOtp) "Remembered PINs cleared (FIDO2 + OTP)" else "Remembered PIN cleared")
             true
         }
         R.id.menu_interfaces -> {
@@ -2523,6 +2842,15 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
             managementPending = true
             showNfcOverlay("Hold your key to the phone", "Reading YubiKey applications…")
             rereadUsbForCurrentTab()   // drive it now if already on USB
+            true
+        }
+        R.id.menu_otp_pin -> {
+            // Read OTP-PIN status on the next tap (CCID/NFC), then offer
+            // set/verify/change/remove. pinPending gates the one-shot dispatch.
+            armPin(
+                com.token2.lkcompanion.token2ui.Token2PinRepository.PendingOp.Status,
+                "Reading OTP PIN status…",
+            )
             true
         }
         R.id.menu_usb_diag -> {

@@ -59,6 +59,10 @@ class Token2Repository {
             val entries: List<Token2Codec.Entry>,
         ) : OpResult()
         object NotAToken2Key : OpResult()
+        /** Enumerate hit a PIN-protected key; the UI must collect + verify a PIN. */
+        object PinRequired : OpResult()
+        /** A supplied PIN was rejected by the key. retriesLeft if known. */
+        data class PinWrong(val retriesLeft: Int?, val maxRetries: Int?) : OpResult()
     }
 
     @Volatile var pending: PendingOp = PendingOp.Refresh
@@ -66,6 +70,23 @@ class Token2Repository {
 
     @Volatile var cachedEntries: List<Token2Codec.Entry> = emptyList()
         private set
+
+    // When set, the next enumerate first opens a verify window with this PIN
+    // (protected key). Cleared once consumed. Held only in memory.
+    @Volatile private var pendingPin: String? = null
+
+    // When true, the next contact sends lock_otp_pin first to close the device's
+    // verify window (needed over USB where the connection — and thus the open
+    // window — persists across reads). Cleared after it runs.
+    @Volatile private var lockOnNextContact: Boolean = false
+
+    /** Supply a PIN to verify on the next read (for a protected key). */
+    fun supplyPin(pin: String) { pendingPin = pin }
+    fun clearPin() { pendingPin = null }
+    /** Whether a PIN is currently held (supplied and not yet cleared). */
+    fun hasPin(): Boolean = pendingPin != null
+    /** Forget the PIN and request the device window be closed on next contact. */
+    fun lockNow() { pendingPin = null; lockOnNextContact = true }
 
     fun arm(op: PendingOp) { pending = op }
 
@@ -115,6 +136,7 @@ class Token2Repository {
                     }
                 }
                 is PendingOp.Delete -> {
+                    verifyIfPending(client)      // open PIN window first on protected keys
                     client.deleteEntry(op.app, op.account)
                     val entries = enumerateSafe(client)
                     cachedEntries = entries
@@ -145,6 +167,14 @@ class Token2Repository {
                     )
                 }
             }
+        } catch (e: Token2Exception.PinNotVerified) {
+            val hadPin = pendingPin != null
+            clearPin()
+            if (hadPin) {
+                // Re-read the flag to report how many attempts remain.
+                val flag = try { client.pinStatus() } catch (_: Exception) { null }
+                OpResult.PinWrong(flag?.retriesLeft, flag?.maxRetries)
+            } else OpResult.PinRequired
         } catch (e: Token2Exception.ButtonPressRequired) {
             OpResult.Failure("Touch the key's button to confirm, then tap again.")
         } catch (e: Token2Exception.NotEnoughSpace) {
@@ -166,10 +196,28 @@ class Token2Repository {
     private val Token2Codec.Entry.label: String
         get() = if (appName.isBlank()) accountName else "$appName / $accountName"
 
-    private fun enumerateSafe(client: Token2Client): List<Token2Codec.Entry> =
-        try {
+    private fun enumerateSafe(client: Token2Client): List<Token2Codec.Entry> {
+        verifyIfPending(client)
+        return try {
             client.enumerate(System.currentTimeMillis() / 1000)
         } catch (e: Token2Exception.EntryNotFound) {
             emptyList()                          // empty token
         }
+    }
+
+    /**
+     * If the UI supplied a PIN (protected key), open the verify window on this
+     * session before a read/write. A wrong PIN throws PinNotVerified, which
+     * propagates to executeOn's handler. On an unprotected key this is a no-op
+     * (no PIN supplied).
+     */
+    private fun verifyIfPending(client: Token2Client) {
+        if (lockOnNextContact) {
+            client.lockOtpPin()          // close the device window (esp. over USB)
+            lockOnNextContact = false
+        }
+        pendingPin?.let { pin ->
+            client.verifyOtpPin(pin.toByteArray(Charsets.UTF_8))
+        }
+    }
 }
