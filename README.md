@@ -327,6 +327,10 @@ exercised on real devices:
 | **Token2 Bio3** | ✅ | ✅ | Fingerprint enrollment verified (enroll requires USB). |
 | **Pico-FIDO** | ✅ | ✅ | FIDO2 over USB works after a stale-buffer drain on INIT. OATH OTP works. |
 | **YubiKey 5** | ✅ | — | Works over NFC. USB is not yet supported for this key. |
+| **YubiKey Bio 5.7.4** | — | ✅ | Fingerprint list / enroll / rename / delete verified (model has no NFC). |
+| **Feitian ePass FIDO** | ✅ | ✅ | FIDO2 management verified. |
+| **Feitian BioPass FIDO2 Pro** | — | ✅ | Fingerprint management verified; passkey capacity (110) shown. |
+| **ACS PocketKey+ Bio** | — | ✅ | MDS name / certification level / icon resolution verified. |
 
 Other CTAP2/YKOATH/PIV/OpenPGP keys are expected to work but are unverified — please
 report results.
