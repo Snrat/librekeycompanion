@@ -61,11 +61,13 @@ class FidoRepository {
     fun forgetPin() { rememberedPin = null }
     val hasRememberedPin get() = rememberedPin != null
 
-    /** Drop all cached FIDO data; called when the key connection changes, so data
-     *  from one key can never be shown for another. */
+    /** Drop everything tied to the current key: cached data **and** any
+     *  remembered PIN. Called whenever the key connection changes, so neither
+     *  data nor credentials can ever carry across keys. */
     fun clearCaches() {
         cachedPasskeys = emptyList()
         lastInfo = null
+        rememberedPin = null
     }
 
     fun arm(op: PendingOp) { pending = op }

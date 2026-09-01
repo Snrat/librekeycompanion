@@ -533,7 +533,8 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         val sessionKey = "nfc:" + (tag.id ?: ByteArray(0)).joinToString("") { "%02x".format(it) }
         if (sessionKey != keySessionKey) {
             keySessionKey = sessionKey
-            fidoRepo.clearCaches()
+            fidoRepo.clearCaches()   // includes the remembered PIN
+            fpPinOwnedByScreen = false
         }
         val isoDep = IsoDep.get(tag) ?: run {
             post("Tag is not ISO-DEP (not a smart-card key)."); return
@@ -603,7 +604,6 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         fidoRepo.arm(FidoRepository.PendingOp.ReadInfo)
         fidoRepo.clearCaches()
         fpPinOwnedByScreen = false
-        fidoRepo.forgetPin()
         oathRepo.forgetPasswords()
         runOnUiThread {
             otpOperationDialog?.dismiss()
@@ -632,9 +632,11 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         val sessionKey = "usb:" + device.deviceName
         if (sessionKey != keySessionKey) {
             // A different connection than last time (replug, key swap, hub switch):
-            // stale FIDO data must never survive into the new key's session.
+            // stale FIDO data AND any remembered PIN must never survive into the
+            // new key's session.
             keySessionKey = sessionKey
-            fidoRepo.clearCaches()
+            fidoRepo.clearCaches()   // includes the remembered PIN
+            fpPinOwnedByScreen = false
         }
         connectedUsbDevice = device
         if (usbBusy) return            // a read is already in flight; don't double-open
