@@ -109,7 +109,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     private var connectedUsbDevice: UsbDevice? = null
     /** Identity of the current key connection ("usb:<devname>" / "nfc:<uid>"); FIDO
      *  caches are dropped whenever it changes, so one key's data is never shown for another. */
-    private var keySessionKey: String? = null
+    @Volatile private var keySessionKey: String? = null
     /** Serializes all USB reads so two taps/resumes can't race on one connection. */
     private val usbExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     /** Guard so a replug (attach intent + resume) doesn't open the same device twice. */
@@ -2303,7 +2303,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
 
     // --- fingerprints screen ---
     /** True when the PIN currently in fidoRepo was entered for this screen; dropped on exit. */
-    private var fpPinOwnedByScreen = false
+    @Volatile private var fpPinOwnedByScreen = false
 
     private fun openFingerprintScreen() {
         fpScreenOpen = true
