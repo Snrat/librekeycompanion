@@ -25,6 +25,11 @@
     <string name="otp_add_entry">Ajouter une entrée</string>
     <string name="otp_tap_key_refresh">Appuyez sur votre clé pour actualiser.</string>
     <string name="otp_scan_qr_code">Scanner le code QR</string>
+    <string name="otp_scan_qr_prompt">Pointez la caméra vers le code QR OTP. Touchez pour faire la mise au point.</string>
+    <string name="otp_scan_torch">Lampe</string>
+    <string name="otp_unlock_with_fingerprint">Déverrouiller par empreinte</string>
+    <string name="otp_unlock_or_pin">ou saisissez votre PIN</string>
+    <string name="otp_scan_camera_permission">L’autorisation caméra est nécessaire pour scanner les codes QR.</string>
     <string name="otp_paste_uri_label">…ou coller une URI otpauth:// :</string>
     <!-- otp_uri_hint is omitted here as it is marked translatable="false" in default strings.xml -->
     <string name="otp_fill_details">— ou remplissez les détails —</string>
@@ -72,4 +77,9 @@
     <string name="menu_yubikey_apps">Applications (YubiKey)</string>
     <string name="menu_usb_diagnostics">Diagnostics USB</string>
     <string name="menu_about">À propos</string>
+    <string name="manage_passkeys">Gérer les clés d\'accès</string>
+    <string name="manage_passkeys_hint">Affiche toutes les clés d\'accès enregistrées sur la clé, avec détails et suppression. Le code PIN de la clé vous sera demandé.</string>
+    <string name="keypad_show">Afficher le pavé numérique</string>
+    <string name="keypad_hide">Masquer le pavé numérique</string>
+    <string name="keypad_note">Un clavier est connecté (en général le canal HID-HOTP de la clé branchée), le téléphone peut donc masquer son clavier. Utilisez ce pavé ou désactivez HID-HOTP dans le menu.</string>
 </resources>

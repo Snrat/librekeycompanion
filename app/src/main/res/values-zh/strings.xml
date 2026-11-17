@@ -25,6 +25,11 @@
     <string name="otp_add_entry">添加条目</string>
     <string name="otp_tap_key_refresh">贴靠您的密钥以刷新</string>
     <string name="otp_scan_qr_code">扫描二维码</string>
+    <string name="otp_scan_qr_prompt">将相机对准 OTP 二维码。点击屏幕对焦。</string>
+    <string name="otp_scan_torch">手电筒</string>
+    <string name="otp_unlock_with_fingerprint">用指纹解锁</string>
+    <string name="otp_unlock_or_pin">或输入 PIN 码</string>
+    <string name="otp_scan_camera_permission">扫描二维码需要相机权限。</string>
     <string name="otp_paste_uri_label">…或粘贴 otpauth:// URI：</string>
     <!-- otp_uri_hint is omitted here as it is marked translatable="false" in default strings.xml -->
     <string name="otp_fill_details">— 或填写详情 —</string>
@@ -72,4 +77,9 @@
     <string name="menu_yubikey_apps">应用程序 (YubiKey)</string>
     <string name="menu_usb_diagnostics">USB 诊断</string>
     <string name="menu_about">关于</string>
+    <string name="manage_passkeys">管理通行密钥</string>
+    <string name="manage_passkeys_hint">列出密钥中存储的所有通行密钥，可查看详情并删除。系统会要求输入密钥的 PIN。</string>
+    <string name="keypad_show">显示数字键盘</string>
+    <string name="keypad_hide">隐藏数字键盘</string>
+    <string name="keypad_note">检测到已连接键盘设备（通常是插入密钥的 HID-HOTP 通道），手机可能会隐藏屏幕键盘。请使用此数字键盘，或在菜单中关闭 HID-HOTP。</string>
 </resources>

@@ -30,7 +30,7 @@ contributors.
 >A native iOS port is available at [librekeycompanion_ios](https://github.com/token2/librekeycompanion_ios).
 >Key differences from Android:
 >- **FIDO2 management is NFC-only.** iOS doesn't yet expose a security key's USB HID/CTAPHID interface to third-party apps, so PIN, alwaysUV, and passkey management work over NFC only.
->- **USB-C uses CryptoTokenKit (CCID), not raw USB.** OATH, Token2 OTP, PIV, and OpenPGP read over USB-C; FIDO2 does not.
+>- **USB-C uses CryptoTokenKit (CCID), not raw USB.** OATH, Token2 OTP, PIV, and OpenPGP read over USB-C; FIDO2 only works on keys allowing CTAP over CCID (Token2 R3 or later, and some others).
 >- Otherwise feature-parity: OATH, Token2 on-device OTP, FIDO2, PIV/OpenPGP status, and FIDO MDS lookup.
 
 
@@ -174,7 +174,9 @@ credential-provider app such as [Authnkey](https://github.com/mimi89999/Authnkey
 
 <img width="425" height="539" alt="image" src="https://github.com/user-attachments/assets/8eb7cc5f-b6ff-44ac-af51-8a1d9ef2655a" />
 
+---
 
+<img width="425"  alt="image" src="https://github.com/user-attachments/assets/5cf90b2b-cc96-41de-a015-da10448d4b4c" />
 
 
 
@@ -212,9 +214,11 @@ matching its **AAGUID** against the
 
 - **Bundled data:** the APK ships with a processed metadata set
   (`res/raw/mds_bundled.json`) so lookups work offline out of the box: hardware
-  authenticators only (software passkey providers dropped via `keyProtection`),
-  certification taken from the newest `statusReports` entry, and every icon
-  normalized to a transparent PNG capped at 96 px (SVG icons are rendered by the
+  authenticators only (software passkey providers dropped via `keyProtection`;
+  roaming keys with an `external` + `wired`/`nfc` `attachmentHint` are kept even
+  when they claim `software`, e.g. Nitrokey 3 AM), certification taken from the newest
+  `statusReports` entry, and every icon normalized to a real transparent PNG
+  capped at 96 px (SVG icons are rendered, and non-PNG bytes re-encoded, by the
   bundler — the app never has to rasterize SVG itself).
 - **In-app update:** *About → Update metadata* downloads the full live MDS BLOB from
   `https://mds3.fidoalliance.org/` (free, no token) and caches it on the device.
